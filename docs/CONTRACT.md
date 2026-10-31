@@ -1,6 +1,6 @@
 # API and domain contract
 
-**Status:** Stage 1 contract draft. This is the implementation source of truth for the demo. Update it and `docs/openapi.yaml` together if a correctness-driven decision changes.
+**Status:** Implementation source of truth. The Stage 3 schema and seed implementation are prepared; the migration is not yet applied to the supplied Supabase project. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
 
 ## 1. Domain vocabulary
 
@@ -48,8 +48,9 @@ Authorization rules:
 4. A driver is `busy` exactly while holding an active assignment. Acceptance and terminal release update ride, assignment, and driver rows in one PostgreSQL transaction.
 5. Ride and driver state are rechecked after acquiring locks. Acceptance locks the ride row first and then the driver row, in a consistent order, and commits assignment plus both status changes together.
 6. PostgreSQL constraints backstop one-open-ride, one-assignment-per-ride, one-active-assignment-per-driver, and idempotency-key uniqueness. A process mutex is not a concurrency guarantee.
-7. Quote inputs contain only pickup ID, destination ID, and category. Creation recomputes distance/fare on the server and persists the quote snapshot. The client cannot select a driver or submit a trusted price.
-8. Every create request has a rider-scoped `Idempotency-Key` (1–128 visible ASCII characters) and canonical request fingerprint over the normalized pickup UUID, destination UUID, and category. Same rider/key and same fingerprint returns the same ride; the response is HTTP 200 and reflects that ride’s current persisted state. Same key with a different fingerprint is 409. A new key while the rider already has an open ride is 409.
+7. Application tables live in the private `ride_hailing` schema, omitted from this repository's Supabase Data API schema list. The remote project must keep it omitted too. RLS is enabled and forced on every table with no browser-facing policies or grants. Go uses server-side qualified SQL and enforces the application session/ownership model.
+8. Quote inputs contain only pickup ID, destination ID, and category. Creation recomputes distance/fare on the server and persists the quote snapshot. The client cannot select a driver or submit a trusted price.
+9. Every create request has a rider-scoped `Idempotency-Key` (1–128 visible ASCII characters) and canonical request fingerprint over the normalized pickup UUID, destination UUID, and category. Same rider/key and same fingerprint returns the same ride; the response is HTTP 200 and reflects that ride’s current persisted state. Same key with a different fingerprint is 409. A new key while the rider already has an open ride is 409.
 
 Acceptance transaction outline: begin; lock ride `FOR UPDATE`; lock driver `FOR UPDATE`; recheck ride state, driver availability, category/city/radius, and active assignment; insert the unique assignment; update ride and driver; commit. Any failed condition rolls back without partial state. Cancellation/completion locks the ride then its assigned driver and updates all affected rows atomically.
 
@@ -122,8 +123,8 @@ Quote response:
 
 `pickup_eta_minutes` is integer or `null`. A ride resource contains its UUID, owner identity restricted as above, pickup and destination snapshots, category, persisted fare/distance/currency snapshot, status, creation/update times, and assignment details only after acceptance. Driver request summaries omit rider identity/contact data. Unknown enum values and extra authority-bearing client fields are rejected or ignored; they never override server state.
 
-## 7. Open questions for implementation
+## 8. Open questions for implementation
 
 - Reconcile the original five-page assessment, especially any evaluation criteria not reproduced in the supplied execution plan.
-- Choose concrete Lahore location and driver fixtures during the schema/seed stage; keep their IDs stable in tests but do not promise a geographic accuracy the demo does not have.
-- Confirm the supported Go and Node versions and exact local environment commands in the scaffold stage.
+- Apply the migration and run the seed/integration checks after the user supplies the Supabase connection string; until then, schema behavior is not database-verified.
+- Implement authentication and session handling in the next stage after the Stage 3 database gate is verified.

@@ -19,6 +19,7 @@ type Config struct {
 	AppOrigin           string
 	SessionCookieSecure bool
 	DemoSeedEnabled     bool
+	DemoAccountPassword string
 	RequestTimeout      time.Duration
 }
 
@@ -56,6 +57,13 @@ func Load() (Config, error) {
 	if seedEnabled && databaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required when DEMO_SEED_ENABLED is true")
 	}
+	demoAccountPassword := os.Getenv("DEMO_ACCOUNT_PASSWORD")
+	if seedEnabled && len(demoAccountPassword) < 12 {
+		return Config{}, errors.New("DEMO_ACCOUNT_PASSWORD must contain at least 12 bytes when demo seeding is enabled")
+	}
+	if seedEnabled && len(demoAccountPassword) > 72 {
+		return Config{}, errors.New("DEMO_ACCOUNT_PASSWORD must contain at most 72 bytes for bcrypt when demo seeding is enabled")
+	}
 
 	timeoutText := valueOrDefault("REQUEST_TIMEOUT", "10s")
 	requestTimeout, err := time.ParseDuration(timeoutText)
@@ -69,6 +77,7 @@ func Load() (Config, error) {
 		AppOrigin:           appOrigin,
 		SessionCookieSecure: secure,
 		DemoSeedEnabled:     seedEnabled,
+		DemoAccountPassword: demoAccountPassword,
 		RequestTimeout:      requestTimeout,
 	}, nil
 }

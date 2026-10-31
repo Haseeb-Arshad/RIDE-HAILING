@@ -30,6 +30,10 @@ Seed one rider and two driver accounts with hashed passwords and fixed Lahore de
 
 Persist fare as integer paisa. Estimate distance from fixed coordinates with Haversine multiplied by 1.3; apply the documented Economy/Comfort schedule; derive pickup ETA from the nearest eligible demo driver at 25 km/h. Label all estimates approximate and return a null pickup ETA when no eligible driver exists. This makes the demo reproducible without claiming route or market accuracy.
 
-## ADR 8 — Scoped idempotency and database constraints protect retries
+## ADR 8 — Keep application tables outside the Supabase Data API
+
+Store ride-hailing data in a dedicated `ride_hailing` schema and omit it from both local and remote Supabase Data API schema lists. Enable and force RLS on every application table without adding browser-facing policies or grants. The Go service connects server-side and uses qualified SQL. This keeps the backend as the sole business API while still using Supabase-hosted PostgreSQL; the service connection remains privileged and must stay in the ignored server environment.
+
+## ADR 9 — Scoped idempotency and database constraints protect retries
 
 Require an idempotency key per rider and fingerprint the normalized request. Replays identify the same ride; a changed request under the same key is a conflict. A separate unique open-ride constraint rejects a second booking even when a client invents a new key. The trade-off is a small amount of idempotency state and explicit conflict handling in the UI.

@@ -12,7 +12,9 @@ flowchart LR
     DB -->|seeded Lahore locations and demo users| API
 ```
 
-For local development, run Next.js and Go as separate host processes. PostgreSQL will be an external Supabase database when database work begins; no local database or Docker container is part of this workflow. The web rewrite sends browser requests through the Next.js server to Go, and the database connection string remains server-side. No message broker or cache is in the booking path.
+For local development, run Next.js and Go as separate host processes. PostgreSQL is an external Supabase database; the schema and seed are prepared but await the user's connection string. No local database or Docker container is part of this workflow. The web rewrite sends browser requests through the Next.js server to Go, and the database connection string remains server-side. No message broker or cache is in the booking path.
+
+Application tables are created in the private `ride_hailing` schema, which is omitted from this repository's Supabase Data API schema list. RLS is enabled and forced on each table without browser policies or grants. Confirm the remote project's exposed-schema settings also omit `ride_hailing`. The trusted Go service uses qualified table names and the server-side PostgreSQL connection. The migration and repeatable seed command are prepared locally; applying and exercising them awaits the user's Supabase connection string.
 
 ## Ride lifecycle
 

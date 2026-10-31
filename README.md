@@ -4,7 +4,7 @@ A single-repository ride-booking demo for Lahore. The planned stack is a Next.js
 
 ## Project status
 
-The architecture and API contract are recorded, and the initial Next.js and Go services are scaffolded. This stage includes liveness/readiness endpoints and placeholder pages only; ride, authentication, and database features are not implemented yet.
+The Next.js and Go services are scaffolded, and Stage 3 now includes a versioned Supabase migration plus a repeatable Go seed command. The migration has not been applied because the Supabase connection string has not been provided. Authentication, booking, and ride lifecycle routes are still future stages.
 
 ## Project guide
 
@@ -18,7 +18,7 @@ The contract describes a deliberately bounded demo: seeded Lahore locations and 
 
 ## Run the services separately
 
-Prerequisites: Go 1.25 or newer, Node.js 22.13.x or a supported LTS release (24+), and npm. Node 24 LTS is recommended for ongoing work. The Go module selects toolchain 1.27.3. The API and web app run as separate local processes. This project does not start or connect to a local PostgreSQL service or container. The API can run without a database URL in this scaffold stage; `/readyz` returns `503` until a PostgreSQL connection is configured.
+Prerequisites: Go 1.26 or newer, Node.js 24 LTS or newer active LTS, and npm. The Go module selects toolchain 1.27.3. The API and web app run as separate local processes. This project does not start or connect to a local PostgreSQL service or container. The API can run without a database URL in this scaffold stage; `/readyz` returns `503` until a PostgreSQL connection is configured.
 
 1. Copy `.env.example` to `.env` at the repository root. Leave `DATABASE_URL` blank for the current scaffold.
 2. In a terminal, run the Go API:
@@ -43,13 +43,25 @@ Both processes bind to loopback only. The API listens at <http://127.0.0.1:8080>
 
 ## Database
 
-The application will use PostgreSQL through Go's `pgx` driver. Supabase credentials are not needed for this scaffold. When database migrations and seed data are ready, provide a PostgreSQL connection string for the API's ignored root `.env` file. For a persistent API, use the direct connection when IPv6 is available or Supavisor session mode on IPv4-only networks. Transaction mode is intended for transient/serverless clients and does not support prepared statements ([Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres)). We will confirm the connection mode and pgx settings when the database stage begins. Never commit `.env` or expose the connection string in frontend variables. No Supabase Auth or browser-side database client is planned; Go remains the only business API.
+The application uses PostgreSQL through Go's `pgx` driver. The migration is in `supabase/migrations/`; it creates the private `ride_hailing` schema, database constraints, and indexes. The checked-in Supabase config omits `ride_hailing` from the Data API schema list, and the migration revokes schema/table grants and enables and forces RLS with no client policies. Confirm the remote project's exposed-schema settings also omit `ride_hailing` before applying the migration. Go uses qualified table names and the server-side connection.
+
+Once a Supabase connection string is available:
+
+1. Put it in `DATABASE_URL` in the ignored root `.env` file.
+2. Run `.\scripts\supabase-db-push.ps1` from the repository root. It uses the pinned Supabase CLI and reads the connection from `.env` without writing it into a tracked file.
+3. Set `DEMO_SEED_ENABLED=true` and a private `DEMO_ACCOUNT_PASSWORD` of 12–72 bytes in that same ignored `.env` file.
+4. From `apps/api`, run `go run ./cmd/seed`. The command wraps all fixtures in a transaction and is safe to rerun; it does not reset active driver availability.
+
+The seed creates `rider@example.test`, `driver.one@example.test`, and `driver.two@example.test`; all use the password configured locally. It also inserts seven approximate Lahore locations. Do not enable demo seeding against a shared database until you have chosen an appropriate demo password. The database stage remains unverified until the migration, seed, and integration check have run against the supplied Supabase database. No local PostgreSQL process or Docker container is started by this project.
+
+For a persistent API, use the direct connection when IPv6 is available or Supavisor session mode on IPv4-only networks. Transaction mode is intended for transient/serverless clients and does not support prepared statements ([Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres)). Never commit `.env` or expose the connection string in frontend variables. No Supabase Auth or browser-side database client is planned; Go remains the only business API.
 
 ## Current checks
 
 ```powershell
 Set-Location apps/api
 go build ./...
+go test ./...
 
 Set-Location ../web
 npm run lint
@@ -57,4 +69,6 @@ npx tsc --noEmit
 npm run build
 ```
 
-These commands check the scaffold only. There are no ride flows or application tests yet; those arrive in later stages.
+`go test ./...` compiles the API tests. The Stage 3 integration check is skipped unless `TEST_DATABASE_URL` is set. After the Supabase migration and seed have been applied, run `.\scripts\test-supabase-schema.ps1`; it runs the database checks inside a transaction and rolls its fixture writes back. The integration check requires a privileged PostgreSQL connection because RLS is forced on the application tables.
+
+These checks cover the scaffold and Stage 3 schema only. Authentication, booking, ride flows, and their tests arrive in later stages.
