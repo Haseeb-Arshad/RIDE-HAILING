@@ -7,7 +7,7 @@ info:
     identity, fare, eligibility, assignment, and ride state. Estimates use
     fixed Lahore demo coordinates and are approximate.
 servers:
-  - url: http://localhost:8080
+  - url: http://127.0.0.1:8080
     description: Local Go API; browsers normally use the same-origin Next.js rewrite.
 tags:
   - name: Health

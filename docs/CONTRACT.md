@@ -30,7 +30,7 @@ The API derives actor ID and role solely from a server-validated session. It ign
 
 Login uses seeded demo users with hashed passwords. The server creates a cryptographically random opaque session token, stores only its hash, and returns the token in a cookie. Cookie settings: `HttpOnly`, `Path=/`, `SameSite=Lax`, bounded expiry, and `Secure` in production. The token is never exposed to JavaScript or logs. Logout revokes the session. `/auth/me` returns a session-bound CSRF token for browser requests.
 
-All unsafe requests require an `Origin` matching the configured application origin. Authenticated browser writes also require `X-CSRF-Token` matching the session token. Login has no authenticated CSRF token yet, but still requires the allowed `Origin`. The browser calls same-origin `/api/v1/...`; Next.js rewrites requests server-side to Go. The Docker-only API hostname must never be exposed in a `NEXT_PUBLIC_` variable.
+All unsafe requests require an `Origin` matching the configured application origin. Authenticated browser writes also require `X-CSRF-Token` matching the session token. Login has no authenticated CSRF token yet, but still requires the allowed `Origin`. The browser calls same-origin `/api/v1/...`; Next.js rewrites requests server-side to Go. The API origin and database URL are server-only settings and must never be exposed in a `NEXT_PUBLIC_` variable.
 
 Authorization rules:
 

@@ -12,7 +12,7 @@ flowchart LR
     DB -->|seeded Lahore locations and demo users| API
 ```
 
-Compose will run `web`, `api`, and `db` on a private development network. Browser code never resolves the Docker-only API hostname. No message broker or cache is in the booking path.
+For local development, run Next.js and Go as separate host processes. PostgreSQL will be an external Supabase database when database work begins; no local database or Docker container is part of this workflow. The web rewrite sends browser requests through the Next.js server to Go, and the database connection string remains server-side. No message broker or cache is in the booking path.
 
 ## Ride lifecycle
 

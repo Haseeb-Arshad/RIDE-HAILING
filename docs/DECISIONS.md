@@ -8,7 +8,7 @@ Use Go with Chi for a compact HTTP API, explicit request handling, standard-libr
 
 ## ADR 2 — Next.js and Go remain separate runtimes in one repository
 
-Keep `apps/web` and `apps/api` together so one assessment checkout can run the complete journey, while keeping the presentation runtime independent from the business API. A server-side Next rewrite gives browser requests a same-origin `/api/v1` URL and avoids exposing Docker service names or adding a CORS workaround.
+Keep `apps/web` and `apps/api` together so one assessment checkout can run the complete journey, while keeping the presentation runtime independent from the business API. Run them as separate local processes. A server-side Next rewrite gives browser requests a same-origin `/api/v1` URL and avoids exposing internal API hosts or adding a CORS workaround. Use the user's Supabase PostgreSQL project for database work rather than starting a local database service.
 
 ## ADR 3 — PostgreSQL is the source of truth
 
