@@ -11,7 +11,10 @@ import (
 
 type contextKey uint8
 
-const requestIDKey contextKey = iota
+const (
+	requestIDKey contextKey = iota
+	principalContextKey
+)
 
 type statusWriter struct {
 	http.ResponseWriter

@@ -21,9 +21,9 @@ if ($databaseUrl -notmatch '^postgres(ql)?://\S+$') {
 Push-Location (Join-Path $repositoryRoot "apps\api")
 try {
     $env:TEST_DATABASE_URL = $databaseUrl
-    go test ./cmd/seed -run TestPostgresSchemaConstraintsAndRepeatableSeed -count=1
+    go test ./... -count=1
     if ($LASTEXITCODE -ne 0) {
-        throw "PostgreSQL schema integration check failed with exit code $LASTEXITCODE."
+        throw "PostgreSQL integration checks failed with exit code $LASTEXITCODE."
     }
 }
 finally {

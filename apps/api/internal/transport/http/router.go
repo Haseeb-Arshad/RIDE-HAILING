@@ -7,10 +7,11 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/auth"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewHandler(pool *pgxpool.Pool, requestTimeout time.Duration, logger *slog.Logger) http.Handler {
+func NewHandler(pool *pgxpool.Pool, requestTimeout time.Duration, appOrigin string, cookieSecure bool, logger *slog.Logger) http.Handler {
 	router := chi.NewRouter()
 	router.Use(RequestID)
 	router.Use(func(next http.Handler) http.Handler { return AccessLogger(logger, next) })
@@ -22,6 +23,10 @@ func NewHandler(pool *pgxpool.Pool, requestTimeout time.Duration, logger *slog.L
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	router.Get("/readyz", readiness(pool, requestTimeout))
+
+	authRepository := auth.NewPostgresRepository(pool)
+	authHandlers := newAuthHandlers(auth.NewService(authRepository), appOrigin, cookieSecure)
+	authHandlers.registerRoutes(router)
 
 	return router
 }

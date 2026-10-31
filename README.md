@@ -4,7 +4,7 @@ A single-repository ride-booking demo for Lahore. The planned stack is a Next.js
 
 ## Project status
 
-The Next.js and Go services are scaffolded, and Stage 3 now includes a versioned Supabase migration plus a repeatable Go seed command. The migration has not been applied because the Supabase connection string has not been provided. Authentication, booking, and ride lifecycle routes are still future stages.
+The Next.js and Go services are scaffolded. Stages 3 and 4 now include a versioned Supabase migration, repeatable Go seed command, and cookie-based API authentication. The migration and seed have not been applied because the Supabase connection string has not been provided, so database-backed login is not yet available. The web login remains a placeholder; booking and ride lifecycle routes are later stages.
 
 ## Project guide
 
@@ -18,7 +18,7 @@ The contract describes a deliberately bounded demo: seeded Lahore locations and 
 
 ## Run the services separately
 
-Prerequisites: Go 1.26 or newer, Node.js 24 LTS or newer active LTS, and npm. The Go module selects toolchain 1.27.3. The API and web app run as separate local processes. This project does not start or connect to a local PostgreSQL service or container. The API can run without a database URL in this scaffold stage; `/readyz` returns `503` until a PostgreSQL connection is configured.
+Prerequisites: Go 1.26 or newer, Node.js 24 LTS or newer active LTS, and npm. The Go module selects toolchain 1.27.3. The API and web app run as separate local processes. This project does not start or connect to a local PostgreSQL service or container. With no database URL, liveness stays available while `/readyz` and auth routes return `503`.
 
 1. Copy `.env.example` to `.env` at the repository root. Leave `DATABASE_URL` blank for the current scaffold.
 2. In a terminal, run the Go API:
@@ -69,6 +69,6 @@ npx tsc --noEmit
 npm run build
 ```
 
-`go test ./...` compiles the API tests. The Stage 3 integration check is skipped unless `TEST_DATABASE_URL` is set. After the Supabase migration and seed have been applied, run `.\scripts\test-supabase-schema.ps1`; it runs the database checks inside a transaction and rolls its fixture writes back. The integration check requires a privileged PostgreSQL connection because RLS is forced on the application tables.
+`go test ./...` runs the local auth and HTTP tests. PostgreSQL schema and session integration checks are skipped unless `TEST_DATABASE_URL` is set. After the Supabase migration and seed have been applied, run `.\scripts\test-supabase-integration.ps1`; it runs the database checks inside a transaction and rolls its fixture writes back. The integration check requires a privileged PostgreSQL connection because RLS is forced on the application tables.
 
-These checks cover the scaffold and Stage 3 schema only. Authentication, booking, ride flows, and their tests arrive in later stages.
+These checks cover the scaffold, schema contract, and API authentication. Booking, quotes, ride flows, and their tests arrive in later stages.

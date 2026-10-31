@@ -1,6 +1,6 @@
 # API and domain contract
 
-**Status:** Implementation source of truth. The Stage 3 schema and seed implementation are prepared; the migration is not yet applied to the supplied Supabase project. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
+**Status:** Implementation source of truth. Stage 3 schema/seed and Stage 4 API authentication are implemented locally. The migration, seed, and database-backed session checks await the supplied Supabase connection. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
 
 ## 1. Domain vocabulary
 
@@ -28,9 +28,9 @@ No other transition is valid. `busy` is system-managed and cannot be selected by
 
 The API derives actor ID and role solely from a server-validated session. It ignores client-supplied `rider_id`, `driver_id`, role, ride status, fare, ETA, or assignment fields. SQL queries are parameterized.
 
-Login uses seeded demo users with hashed passwords. The server creates a cryptographically random opaque session token, stores only its hash, and returns the token in a cookie. Cookie settings: `HttpOnly`, `Path=/`, `SameSite=Lax`, bounded expiry, and `Secure` in production. The token is never exposed to JavaScript or logs. Logout revokes the session. `/auth/me` returns a session-bound CSRF token for browser requests.
+Login uses seeded demo users with bcrypt password hashes. The server creates a cryptographically random 32-byte opaque session token, stores only its SHA-256 hash, and returns it in an `HttpOnly` cookie. Cookie settings: `Path=/`, `SameSite=Lax`, seven-day bounded expiry, and `Secure` when `SESSION_COOKIE_SECURE=true`. The session token is never exposed to JavaScript or logs. Logout revokes the session. `/auth/me` returns the identity and a session-bound CSRF token for browser requests; only the CSRF token hash is stored.
 
-All unsafe requests require an `Origin` matching the configured application origin. Authenticated browser writes also require `X-CSRF-Token` matching the session token. Login has no authenticated CSRF token yet, but still requires the allowed `Origin`. The browser calls same-origin `/api/v1/...`; Next.js rewrites requests server-side to Go. The API origin and database URL are server-only settings and must never be exposed in a `NEXT_PUBLIC_` variable.
+All unsafe requests require an `Origin` matching the configured application origin. Authenticated browser writes also require `X-CSRF-Token` matching the session-bound CSRF token hash. Login has no authenticated CSRF token yet, but still requires the allowed `Origin`. The browser calls same-origin `/api/v1/...`; Next.js rewrites requests server-side to Go. The API origin and database URL are server-only settings and must never be exposed in a `NEXT_PUBLIC_` variable.
 
 Authorization rules:
 
@@ -72,7 +72,7 @@ An eligible driver is in Lahore, `available`, category-compatible, and within th
 - JSON request and response bodies use UTF-8 and `application/json` unless the response is `204`.
 - Responses include `X-Request-ID`; the same ID appears in an error envelope. Logs are structured and omit passwords, cookies, session tokens, and CSRF values.
 - Error shape: `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`.
-- `400`: malformed JSON or malformed request syntax. `401`: no valid session or invalid credentials. `403`: wrong role, Origin, or CSRF. `404`: unknown ID or concealed non-owned resource. `409`: state, eligibility, uniqueness, or idempotency conflict. `413`: body too large. `422`: valid JSON with invalid semantic fields. `500`: unexpected error with a generic message. `503`: readiness unavailable.
+- `400`: malformed JSON or malformed request syntax. `401`: no valid session or invalid credentials. `403`: wrong role, Origin, or CSRF. `404`: unknown ID or concealed non-owned resource. `409`: state, eligibility, uniqueness, or idempotency conflict. `413`: body too large. `422`: valid JSON with invalid semantic fields. `500`: unexpected error with a generic message. `503`: readiness or authentication storage unavailable.
 - Use `401` for unauthenticated, `403` for insufficient rights/CSRF, `404` for concealed non-owned resources, `409` for state conflicts, and `422` for valid-JSON field validation.
 - Repeated accept by the already assigned driver returns `200` with the current ride. Repeated cancel by the owning rider after cancellation and repeated complete by the assigned driver after completion return `200` with the current ride. Other invalid transitions return `409`.
 
@@ -126,5 +126,5 @@ Quote response:
 ## 8. Open questions for implementation
 
 - Reconcile the original five-page assessment, especially any evaluation criteria not reproduced in the supplied execution plan.
-- Apply the migration and run the seed/integration checks after the user supplies the Supabase connection string; until then, schema behavior is not database-verified.
-- Implement authentication and session handling in the next stage after the Stage 3 database gate is verified.
+- Apply the migration, seed the demo accounts, and run the schema/session integration checks after the user supplies the Supabase connection string; until then, database-backed behavior is not verified.
+- Implement location and quote routes in Stage 5 after the Stage 4 database gate is verified.

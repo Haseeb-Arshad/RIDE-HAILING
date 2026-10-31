@@ -47,7 +47,7 @@ paths:
     post:
       tags: [Authentication]
       summary: Start a seeded demo user session
-      description: Guest route. Requires an allowed Origin. Sets an HttpOnly session cookie; never returns the session token in JSON.
+      description: Guest route. Requires an allowed Origin. Sets a seven-day HttpOnly, SameSite=Lax `ride_session` cookie; never returns the session token in JSON. The response includes the session-bound CSRF token.
       security: []
       parameters:
         - $ref: '#/components/parameters/OriginHeader'
@@ -56,14 +56,14 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/LoginRequest' }
-            example: { email: rider@example.test, password: demo-password }
+            example: { email: rider@example.test, password: configured-demo-password }
       responses:
         '200':
           description: Session created.
           headers:
             Set-Cookie:
               schema: { type: string }
-              description: HttpOnly, SameSite=Lax cookie; Secure in production.
+              description: HttpOnly, Path=/, SameSite=Lax, seven-day cookie; Secure when configured.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/SessionResponse' }
@@ -72,6 +72,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/ValidationError' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/auth/me:
     get:
       tags: [Authentication]
@@ -85,11 +86,12 @@ paths:
               schema: { $ref: '#/components/schemas/SessionResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/auth/logout:
     post:
       tags: [Authentication]
       summary: Revoke the current session
-      description: Authenticated write; requires matching Origin and X-CSRF-Token. Clears the session cookie.
+      description: Authenticated write; requires matching Origin and X-CSRF-Token. Revokes the session and clears `ride_session`.
       security: [{ SessionCookie: [] }]
       parameters:
         - $ref: '#/components/parameters/OriginHeader'
@@ -99,6 +101,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/locations:
     get:
       tags: [Locations and quotes]
@@ -424,6 +427,9 @@ components:
     InternalError:
       description: Unexpected error; message is generic and includes request ID.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Unavailable:
+      description: Authentication storage is unavailable.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
   schemas:
     Probe:
       type: object
@@ -448,12 +454,13 @@ components:
       required: [email, password]
       properties:
         email: { type: string, format: email }
-        password: { type: string, minLength: 1, writeOnly: true }
+        password: { type: string, minLength: 1, maxLength: 72, writeOnly: true }
     User:
       type: object
-      required: [id, display_name, role]
+      required: [id, email, display_name, role]
       properties:
         id: { type: string, format: uuid }
+        email: { type: string, format: email }
         display_name: { type: string }
         role: { $ref: '#/components/schemas/Role' }
     SessionResponse:

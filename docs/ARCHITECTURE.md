@@ -16,6 +16,8 @@ For local development, run Next.js and Go as separate host processes. PostgreSQL
 
 Application tables are created in the private `ride_hailing` schema, which is omitted from this repository's Supabase Data API schema list. RLS is enabled and forced on each table without browser policies or grants. Confirm the remote project's exposed-schema settings also omit `ride_hailing`. The trusted Go service uses qualified table names and the server-side PostgreSQL connection. The migration and repeatable seed command are prepared locally; applying and exercising them awaits the user's Supabase connection string.
 
+Authentication uses a seven-day opaque cookie session. The database stores SHA-256 hashes of the session token and session-bound CSRF token. Go resolves the principal from the session row on each request, checks Origin on unsafe requests, and applies role and ride-ownership helpers before business handlers run.
+
 ## Ride lifecycle
 
 ```mermaid

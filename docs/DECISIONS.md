@@ -37,3 +37,7 @@ Store ride-hailing data in a dedicated `ride_hailing` schema and omit it from bo
 ## ADR 9 — Scoped idempotency and database constraints protect retries
 
 Require an idempotency key per rider and fingerprint the normalized request. Replays identify the same ride; a changed request under the same key is a conflict. A separate unique open-ride constraint rejects a second booking even when a client invents a new key. The trade-off is a small amount of idempotency state and explicit conflict handling in the UI.
+
+## ADR 10 — Store opaque sessions in PostgreSQL
+
+Give each login a random 32-byte cookie token and store only its SHA-256 hash with expiry, revocation, and a hash of a session-bound CSRF token. Resolve identity from the database on every request so logout and expiry take effect across API restarts. The trade-off is a database lookup on authenticated requests; it keeps session revocation immediate without a separate cache or token-signing key.
