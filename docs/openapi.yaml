@@ -1,0 +1,564 @@
+openapi: 3.1.0
+info:
+  title: Lahore Ride Hailing API
+  version: 0.1.0
+  description: >-
+    Contract draft for the assessment demo. The Go API is authoritative for
+    identity, fare, eligibility, assignment, and ride state. Estimates use
+    fixed Lahore demo coordinates and are approximate.
+servers:
+  - url: http://localhost:8080
+    description: Local Go API; browsers normally use the same-origin Next.js rewrite.
+tags:
+  - name: Health
+  - name: Authentication
+  - name: Locations and quotes
+  - name: Rider rides
+  - name: Driver
+paths:
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      security: []
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Probe' }
+  /readyz:
+    get:
+      tags: [Health]
+      summary: Database readiness probe
+      security: []
+      responses:
+        '200':
+          description: PostgreSQL is reachable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Probe' }
+        '503':
+          description: Database is unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /api/v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Start a seeded demo user session
+      description: Guest route. Requires an allowed Origin. Sets an HttpOnly session cookie; never returns the session token in JSON.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+            example: { email: rider@example.test, password: demo-password }
+      responses:
+        '200':
+          description: Session created.
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly, SameSite=Lax cookie; Secure in production.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Read the current user and session CSRF token
+      security: [{ SessionCookie: [] }]
+      responses:
+        '200':
+          description: Current authenticated identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SessionResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke the current session
+      description: Authenticated write; requires matching Origin and X-CSRF-Token. Clears the session cookie.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '204': { description: Session revoked and cookie cleared. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/locations:
+    get:
+      tags: [Locations and quotes]
+      summary: List seeded Lahore locations
+      security: [{ SessionCookie: [] }]
+      responses:
+        '200':
+          description: Seeded locations available to authenticated users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [locations]
+                properties:
+                  locations:
+                    type: array
+                    items: { $ref: '#/components/schemas/Location' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/quotes:
+    post:
+      tags: [Locations and quotes]
+      summary: Calculate a server-side approximate fare and pickup ETA
+      description: Rider only. Does not create a ride. Quote is illustrative and is recomputed on ride creation.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuoteRequest' }
+      responses:
+        '200':
+          description: Approximate quote.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Quote' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/rides:
+    post:
+      tags: [Rider rides]
+      summary: Create a ride
+      description: >-
+        Rider only. The server recomputes the quote. Requires a rider-scoped
+        Idempotency-Key. Same key and normalized request returns the same ride
+        with its current state (200); changed request under that key is 409.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 1–128 visible ASCII characters; reuse the same value for retries of one intent.
+          schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[!-~]+$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuoteRequest' }
+      responses:
+        '201':
+          description: Ride created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ride' }
+        '200':
+          description: Idempotent replay of the same ride; representation reflects current persisted state.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ride' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/rides/current:
+    get:
+      tags: [Rider rides]
+      summary: Get the rider's current open ride
+      description: Rider only; returns a null ride when there is no requested or accepted ride.
+      security: [{ SessionCookie: [] }]
+      responses:
+        '200':
+          description: Current open ride, if any.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ride]
+                properties:
+                  ride:
+                    oneOf:
+                      - { $ref: '#/components/schemas/Ride' }
+                      - { type: 'null' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/rides/{id}:
+    get:
+      tags: [Rider rides]
+      summary: Read an authorized ride
+      description: Owning rider or assigned driver only; other users receive a concealed 404.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+      responses:
+        '200':
+          description: Authorized ride representation.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ride' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/rides/{id}/accept:
+    post:
+      tags: [Driver]
+      summary: Atomically accept an eligible requested ride
+      description: Eligible available driver only. Locks ride then driver and commits ride, assignment, and driver status together. Repeated accept by the winning driver returns current ride; another winner or ineligibility is 409.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Ride accepted or already assigned to this driver.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ride' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/rides/{id}/cancel:
+    post:
+      tags: [Rider rides]
+      summary: Cancel the owning rider's requested or accepted ride
+      description: An accepted ride releases its driver atomically. Repeating cancellation after cancellation returns the current ride.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Ride cancelled or already cancelled by this rider.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ride' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/rides/{id}/complete:
+    post:
+      tags: [Driver]
+      summary: Complete a ride assigned to the current driver
+      description: Assigned driver only. Closes the assignment and makes the driver available atomically. Repeating completion after completion returns the current ride.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/RideId'
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      responses:
+        '200':
+          description: Ride completed or already completed by this driver.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ride' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/driver/requests:
+    get:
+      tags: [Driver]
+      summary: List eligible open ride requests
+      description: Driver only. Oldest first, bounded page; contains no rider identity or contact details.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 50, default: 25 }
+        - name: cursor
+          in: query
+          required: false
+          description: Opaque keyset cursor from the previous response.
+          schema: { type: string }
+      responses:
+        '200':
+          description: Eligible requests and optional next cursor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [requests, next_cursor]
+                properties:
+                  requests:
+                    type: array
+                    items: { $ref: '#/components/schemas/DriverRequest' }
+                  next_cursor:
+                    type: [string, 'null']
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/driver/assignment:
+    get:
+      tags: [Driver]
+      summary: Read the current driver's active assignment
+      security: [{ SessionCookie: [] }]
+      responses:
+        '200':
+          description: Active assignment or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [assignment]
+                properties:
+                  assignment:
+                    oneOf:
+                      - { $ref: '#/components/schemas/AssignmentView' }
+                      - { type: 'null' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /api/v1/drivers/me/availability:
+    patch:
+      tags: [Driver]
+      summary: Set driver availability
+      description: Driver only; `busy` is system-managed. A driver with an active assignment cannot change availability.
+      security: [{ SessionCookie: [] }]
+      parameters:
+        - $ref: '#/components/parameters/OriginHeader'
+        - $ref: '#/components/parameters/CsrfHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status: { type: string, enum: [offline, available] }
+      responses:
+        '200':
+          description: Updated driver status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { $ref: '#/components/schemas/DriverStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: ride_session
+      description: Opaque HttpOnly server session cookie. Never read it from browser JavaScript.
+  parameters:
+    OriginHeader:
+      name: Origin
+      in: header
+      required: true
+      description: Must exactly match the configured application origin for unsafe requests.
+      schema: { type: string, format: uri }
+    CsrfHeader:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: Session-bound value returned by auth/login or auth/me.
+      schema: { type: string, minLength: 1 }
+    RideId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    BadRequest:
+      description: Malformed JSON or request syntax.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Unauthorized:
+      description: Missing/expired session or invalid credentials.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Forbidden:
+      description: Role, Origin, or CSRF check failed.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    NotFound:
+      description: Unknown resource or concealed non-owned ride.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    Conflict:
+      description: State, eligibility, uniqueness, or idempotency conflict.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    ValidationError:
+      description: Valid JSON with semantically invalid fields.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    TooLarge:
+      description: Request body exceeded the configured limit.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+    InternalError:
+      description: Unexpected error; message is generic and includes request ID.
+      content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
+  schemas:
+    Probe:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, examples: [ok, ready] }
+    Role:
+      type: string
+      enum: [rider, driver]
+    DriverStatus:
+      type: string
+      enum: [offline, available, busy]
+    RideStatus:
+      type: string
+      enum: [requested, accepted, completed, cancelled]
+    Category:
+      type: string
+      enum: [economy, comfort]
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1, writeOnly: true }
+    User:
+      type: object
+      required: [id, display_name, role]
+      properties:
+        id: { type: string, format: uuid }
+        display_name: { type: string }
+        role: { $ref: '#/components/schemas/Role' }
+    SessionResponse:
+      type: object
+      required: [user, csrf_token]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        csrf_token: { type: string, description: Session-bound token for authenticated browser writes. }
+    Location:
+      type: object
+      required: [id, name, area, city]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        area: { type: string }
+        city: { type: string, const: Lahore }
+    QuoteRequest:
+      type: object
+      additionalProperties: false
+      required: [pickup_location_id, destination_location_id, category]
+      properties:
+        pickup_location_id: { type: string, format: uuid }
+        destination_location_id: { type: string, format: uuid }
+        category: { $ref: '#/components/schemas/Category' }
+    Quote:
+      type: object
+      required: [estimated_fare_paisa, estimated_distance_meters, pickup_eta_minutes, currency, approximate]
+      properties:
+        estimated_fare_paisa: { type: integer, format: int64, minimum: 0 }
+        estimated_distance_meters: { type: integer, format: int64, minimum: 1 }
+        pickup_eta_minutes:
+          oneOf:
+            - { type: integer, minimum: 2 }
+            - { type: 'null' }
+        currency: { type: string, const: PKR }
+        approximate: { type: boolean, const: true }
+    AssignmentStatus:
+      type: string
+      enum: [active, completed, cancelled]
+    Assignment:
+      type: object
+      required: [id, driver_id, status, assigned_at]
+      properties:
+        id: { type: string, format: uuid }
+        driver_id: { type: string, format: uuid }
+        driver_display_name: { type: string }
+        status: { $ref: '#/components/schemas/AssignmentStatus' }
+        assigned_at: { type: string, format: date-time }
+    Ride:
+      type: object
+      required: [id, rider, pickup, destination, category, estimated_fare_paisa, estimated_distance_meters, currency, status, assignment, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        rider:
+          type: object
+          description: Returned only to the ride owner and assigned driver; contains no contact information.
+          required: [id, display_name]
+          properties:
+            id: { type: string, format: uuid }
+            display_name: { type: string }
+        pickup: { $ref: '#/components/schemas/Location' }
+        destination: { $ref: '#/components/schemas/Location' }
+        category: { $ref: '#/components/schemas/Category' }
+        estimated_fare_paisa: { type: integer, format: int64, minimum: 0 }
+        estimated_distance_meters: { type: integer, format: int64, minimum: 1 }
+        pickup_eta_minutes:
+          oneOf:
+            - { type: integer, minimum: 2 }
+            - { type: 'null' }
+        currency: { type: string, const: PKR }
+        approximate: { type: boolean, const: true }
+        status: { $ref: '#/components/schemas/RideStatus' }
+        assignment:
+          oneOf:
+            - { $ref: '#/components/schemas/Assignment' }
+            - { type: 'null' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DriverRequest:
+      type: object
+      required: [id, pickup, destination, category, estimated_fare_paisa, estimated_distance_meters, currency, status, created_at, pickup_distance_meters]
+      properties:
+        id: { type: string, format: uuid }
+        pickup: { $ref: '#/components/schemas/Location' }
+        destination: { $ref: '#/components/schemas/Location' }
+        category: { $ref: '#/components/schemas/Category' }
+        estimated_fare_paisa: { type: integer, format: int64, minimum: 0 }
+        estimated_distance_meters: { type: integer, format: int64, minimum: 1 }
+        currency: { type: string, const: PKR }
+        status: { type: string, const: requested }
+        created_at: { type: string, format: date-time }
+        pickup_distance_meters: { type: integer, format: int64, minimum: 0, description: Approximate driver-to-pickup distance. }
+    AssignmentView:
+      type: object
+      required: [ride]
+      properties:
+        ride: { $ref: '#/components/schemas/Ride' }
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
