@@ -45,3 +45,7 @@ Give each login a random 32-byte cookie token and store only its SHA-256 hash wi
 ## ADR 11 — Serialize each rider's idempotent booking attempts
 
 Lock the authenticated rider row before checking the idempotency key or open-ride constraint. Requests from the same rider then observe each other's committed key and ride, so concurrent retries replay one result; the database's unique key and partial open-ride index remain the final guards. This briefly serializes booking attempts for one rider and avoids an application mutex or a second lock table.
+
+## ADR 12 — Lock ride before driver for assignment and release
+
+Every operation that changes a ride and driver locks the ride row first and the driver row second. Availability changes lock only the driver row and recheck active assignments after acquiring it. This shared order makes accept, cancel, complete, and availability races resolve through PostgreSQL across API processes; unique assignment constraints remain backstops.

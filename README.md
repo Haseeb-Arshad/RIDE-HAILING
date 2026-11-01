@@ -4,7 +4,7 @@ A single-repository ride-booking demo for Lahore. The planned stack is a Next.js
 
 ## Project status
 
-The Next.js and Go services are scaffolded. Stages 3–5 now include a versioned Supabase migration, repeatable Go seed command, cookie-based API authentication, Lahore locations, server-calculated fare/ETA quotes, idempotent ride creation, and owner-scoped ride reads. The migration and seed have not been applied because the Supabase connection string has not been provided, so database-backed behavior is not yet available. The web login remains a placeholder; rider/driver booking screens and ride lifecycle routes are later stages.
+The Next.js and Go services are scaffolded. Stages 3–6 now include a versioned Supabase migration, repeatable Go seed command, cookie-based API authentication, Lahore locations, server-calculated fare/ETA quotes, idempotent ride creation, owner-scoped reads, driver availability, and transactional ride assignment and lifecycle routes. The migration and seed have not been applied because the Supabase connection string has not been provided, so database-backed behavior is not yet verified. The web login remains a placeholder; rider/driver booking screens are the next stage.
 
 ## Project guide
 
@@ -69,6 +69,6 @@ npx tsc --noEmit
 npm run build
 ```
 
-`go test ./...` runs the local auth, pricing, ride-service, and HTTP tests. PostgreSQL schema, session, and ride integration checks are skipped unless `TEST_DATABASE_URL` is set. After the Supabase migration and seed have been applied, run `.\scripts\test-supabase-integration.ps1`. Most database checks use rollback-only transactions; the cross-connection idempotency race creates a unique temporary rider and removes its test rows during cleanup. The integration check requires a privileged PostgreSQL connection because RLS is forced on the application tables.
+`go test ./...` runs the local auth, pricing, ride-service, and HTTP tests. PostgreSQL schema, session, ride, and lifecycle integration checks are skipped unless `TEST_DATABASE_URL` is set. After the Supabase migration and seed have been applied, run `.\scripts\test-supabase-integration.ps1`. Most database checks use rollback-only transactions; cross-connection race tests create unique temporary actors and remove their test rows during cleanup. The integration check requires a privileged PostgreSQL connection because RLS is forced on the application tables.
 
-The current backend checks cover schema/authentication foundations, deterministic pricing, request validation, retry semantics, and route-level role/CSRF behavior. Real PostgreSQL behavior remains unverified until the supplied database is configured. Frontend booking, assignment, cancellation, completion, and end-to-end checks are later stages.
+The current backend checks cover schema/authentication foundations, deterministic pricing, request validation, retry semantics, route-level role/CSRF behavior, and driver/lifecycle handlers. Real PostgreSQL booking and assignment behavior remains unverified until the supplied database is configured. Frontend booking and end-to-end checks are later stages.
