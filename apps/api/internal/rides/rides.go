@@ -100,6 +100,7 @@ type Repository interface {
 	CreateRide(context.Context, string, QuoteRequest, string, []byte, int) (Ride, bool, error)
 	CurrentRide(context.Context, string) (*Ride, error)
 	GetRide(context.Context, string, string, string) (*Ride, error)
+	DriverAvailability(context.Context, string) (drivers.Availability, error)
 	SetAvailability(context.Context, string, drivers.Availability) (drivers.Availability, error)
 	ListDriverRequests(context.Context, string, int, *RequestCursor, int) (DriverRequestPage, error)
 	CurrentAssignment(context.Context, string) (*AssignmentView, error)
@@ -177,6 +178,10 @@ func (s *Service) SetAvailability(ctx context.Context, driverID, value string) (
 		return "", ValidationError{Message: err.Error() + "."}
 	}
 	return s.repository.SetAvailability(ctx, driverID, status)
+}
+
+func (s *Service) DriverAvailability(ctx context.Context, driverID string) (drivers.Availability, error) {
+	return s.repository.DriverAvailability(ctx, driverID)
 }
 
 func (s *Service) ListDriverRequests(ctx context.Context, driverID string, limit int, cursorValue string) (DriverRequestPage, error) {

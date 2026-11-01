@@ -1,34 +1,28 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Ride Lahore web app
 
-## Getting Started
+This Next.js App Router app is the rider and driver interface. Ride rules, identity, prices, and persisted state remain in the Go API. Browser requests use same-origin `/api/v1/*` routes, forwarded to Go by `next.config.ts`.
 
-First, run the development server:
+## Local run
 
-```bash
+```powershell
+npm ci
+Copy-Item .env.local.example .env.local
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://127.0.0.1:3000`. Use `/login` to sign in with one of the seeded account emails. Enter the password configured by `DEMO_ACCOUNT_PASSWORD` during seeding. The login screen never fills or stores that password.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+The rider workspace is `/rider`, the driver workspace is `/driver`, and saved ride status is `/rides/{id}`. The API must be running, and the PostgreSQL migration plus seed must be applied, for account and booking flows to work. With no Supabase connection, the web shell is available but the API-backed journey returns an unavailable state.
 
-## Learn More
+`API_ORIGIN` in `.env.local` configures the server-side rewrite target. Keep it server-only; do not rename it to `NEXT_PUBLIC_API_ORIGIN`.
 
-To learn more about Next.js, take a look at the following resources:
+## Checks
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```powershell
+npm test
+npm run lint
+npx tsc --noEmit
+npm run build
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Component tests mock the Go API. They verify UI behavior and do not establish database persistence or the full two-browser workflow.

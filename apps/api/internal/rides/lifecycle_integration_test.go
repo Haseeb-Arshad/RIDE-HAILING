@@ -169,8 +169,15 @@ func TestPostgresEligibilityAvailabilityAndDriverRelease(t *testing.T) {
 	driverID := fixture.DriverIDs[0]
 	firstRide, secondRide, thirdRide := fixture.RideIDs[0], fixture.RideIDs[1], fixture.RideIDs[2]
 
+	if status, err := service.DriverAvailability(ctx, driverID); err != nil || status != drivers.Available {
+		t.Fatalf("initial driver availability = %q, %v; want available", status, err)
+	}
+
 	if _, err := service.SetAvailability(ctx, driverID, string(drivers.Offline)); err != nil {
 		t.Fatalf("set driver offline: %v", err)
+	}
+	if status, err := service.DriverAvailability(ctx, driverID); err != nil || status != drivers.Offline {
+		t.Fatalf("read offline driver availability = %q, %v; want offline", status, err)
 	}
 	if _, err := service.AcceptRide(ctx, firstRide, driverID); !errors.Is(err, ErrDriverUnavailable) {
 		t.Fatalf("offline driver acceptance error = %v, want ErrDriverUnavailable", err)
@@ -230,6 +237,9 @@ func TestPostgresEligibilityAvailabilityAndDriverRelease(t *testing.T) {
 	}
 	if driverStatus != "available" {
 		t.Fatalf("released driver status = %q, want available", driverStatus)
+	}
+	if status, err := service.DriverAvailability(ctx, driverID); err != nil || status != drivers.Available {
+		t.Fatalf("read released driver availability = %q, %v; want available", status, err)
 	}
 }
 
