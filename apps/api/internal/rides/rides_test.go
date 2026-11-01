@@ -174,6 +174,10 @@ func (f *fakeRepository) GetRide(context.Context, string, string, string) (*Ride
 	return nil, nil
 }
 
+func (f *fakeRepository) DriverAvailability(context.Context, string) (drivers.Availability, error) {
+	return drivers.Available, nil
+}
+
 func (f *fakeRepository) SetAvailability(_ context.Context, _ string, status drivers.Availability) (drivers.Availability, error) {
 	return status, nil
 }

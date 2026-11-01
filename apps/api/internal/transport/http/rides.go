@@ -25,6 +25,7 @@ func registerRideRoutes(router chi.Router, authHandlers *authHandlers, service *
 	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireCSRF, authHandlers.requireRole("rider")).Post("/api/v1/rides", handlers.createRide)
 	router.With(authHandlers.requireAuth, authHandlers.requireRole("rider")).Get("/api/v1/rides/current", handlers.currentRide)
 	router.With(authHandlers.requireAuth).Get("/api/v1/rides/{id}", handlers.getRide)
+	router.With(authHandlers.requireAuth, authHandlers.requireRole("driver")).Get("/api/v1/drivers/me/availability", handlers.getAvailability)
 	router.With(authHandlers.requireAuth, authHandlers.requireRole("driver")).Get("/api/v1/driver/requests", handlers.driverRequests)
 	router.With(authHandlers.requireAuth, authHandlers.requireRole("driver")).Get("/api/v1/driver/assignment", handlers.currentAssignment)
 	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireCSRF, authHandlers.requireRole("driver")).Patch("/api/v1/drivers/me/availability", handlers.setAvailability)
@@ -143,6 +144,23 @@ func (h *rideHandlers) setAvailability(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status, err := h.service.SetAvailability(r.Context(), principal.ID, payload.Status)
+	if err != nil {
+		h.writeRideError(w, r, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, struct {
+		Status string `json:"status"`
+	}{Status: string(status)})
+}
+
+func (h *rideHandlers) getAvailability(w http.ResponseWriter, r *http.Request) {
+	principal, ok := principalFromContext(r.Context())
+	if !ok {
+		writeError(w, r, http.StatusUnauthorized, "unauthenticated", "A valid session is required.")
+		return
+	}
+	status, err := h.service.DriverAvailability(r.Context(), principal.ID)
 	if err != nil {
 		h.writeRideError(w, r, err)
 		return

@@ -171,6 +171,15 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 	driverOneCookie, driverOneCSRF := loginForRideTest(t, router, "driver.one@example.test")
 	driverTwoCookie, driverTwoCSRF := loginForRideTest(t, router, "driver.two@example.test")
 
+	availability := performRideRequest(t, router, http.MethodGet, "/api/v1/drivers/me/availability", "", driverOneCookie, "", "", false)
+	if availability.Code != http.StatusOK || !strings.Contains(availability.Body.String(), `"status":"available"`) {
+		t.Fatalf("driver availability read status=%d body=%s", availability.Code, availability.Body.String())
+	}
+	riderAvailabilityRead := performRideRequest(t, router, http.MethodGet, "/api/v1/drivers/me/availability", "", riderCookie, "", "", false)
+	if riderAvailabilityRead.Code != http.StatusForbidden {
+		t.Fatalf("rider availability read status=%d, want 403", riderAvailabilityRead.Code)
+	}
+
 	requests := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests", nil)
 	request.AddCookie(driverOneCookie)
@@ -213,6 +222,10 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 	if offline.Code != http.StatusOK {
 		t.Fatalf("set offline status=%d body=%s", offline.Code, offline.Body.String())
 	}
+	readOffline := performRideRequest(t, router, http.MethodGet, "/api/v1/drivers/me/availability", "", driverOneCookie, "", "", false)
+	if readOffline.Code != http.StatusOK || !strings.Contains(readOffline.Body.String(), `"status":"offline"`) {
+		t.Fatalf("read updated offline status=%d body=%s", readOffline.Code, readOffline.Body.String())
+	}
 	offlineRequests := httptest.NewRecorder()
 	offlineRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests", nil)
 	offlineRequest.AddCookie(driverOneCookie)
@@ -247,6 +260,10 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 	}
 	if acceptedRide.Status != "accepted" || acceptedRide.Assignment == nil || acceptedRide.Assignment.DriverID != "20000000-0000-4000-8000-000000000002" {
 		t.Fatalf("accepted ride used the wrong actor or state: %+v", acceptedRide)
+	}
+	busy := performRideRequest(t, router, http.MethodGet, "/api/v1/drivers/me/availability", "", driverOneCookie, "", "", false)
+	if busy.Code != http.StatusOK || !strings.Contains(busy.Body.String(), `"status":"busy"`) {
+		t.Fatalf("assigned driver status=%d body=%s", busy.Code, busy.Body.String())
 	}
 	replayAccept := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+created.ID+"/accept", "", driverOneCookie, driverOneCSRF, "", true)
 	if replayAccept.Code != http.StatusOK {
@@ -293,6 +310,10 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 	completed := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+secondRide.ID+"/complete", "", driverOneCookie, driverOneCSRF, "", true)
 	if completed.Code != http.StatusOK || !strings.Contains(completed.Body.String(), `"status":"completed"`) {
 		t.Fatalf("complete ride status=%d body=%s", completed.Code, completed.Body.String())
+	}
+	released := performRideRequest(t, router, http.MethodGet, "/api/v1/drivers/me/availability", "", driverOneCookie, "", "", false)
+	if released.Code != http.StatusOK || !strings.Contains(released.Body.String(), `"status":"available"`) {
+		t.Fatalf("completed driver status=%d body=%s", released.Code, released.Body.String())
 	}
 	replayComplete := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+secondRide.ID+"/complete", "", driverOneCookie, driverOneCSRF, "", true)
 	if replayComplete.Code != http.StatusOK {
@@ -495,6 +516,16 @@ func (r *httpRideRepository) SetAvailability(_ context.Context, driverID string,
 		return "", rides.ErrDriverUnavailable
 	}
 	r.driverStatus[driverID] = status
+	return status, nil
+}
+
+func (r *httpRideRepository) DriverAvailability(_ context.Context, driverID string) (drivers.Availability, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	status, ok := r.driverStatus[driverID]
+	if !ok {
+		return "", rides.ErrDriverNotFound
+	}
 	return status, nil
 }
 

@@ -9,6 +9,28 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func (r *PostgresRepository) DriverAvailability(ctx context.Context, driverID string) (drivers.Availability, error) {
+	if r.database == nil {
+		return "", ErrStoreUnavailable
+	}
+	var status string
+	err := r.database.QueryRow(ctx, `
+		SELECT status::text
+		FROM ride_hailing.driver_profiles
+		WHERE user_id = $1::uuid`, driverID).Scan(&status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrDriverNotFound
+	}
+	if err != nil {
+		return "", unavailable(err)
+	}
+	availability := drivers.Availability(status)
+	if availability != drivers.Offline && availability != drivers.Available && availability != drivers.Busy {
+		return "", ErrStoreUnavailable
+	}
+	return availability, nil
+}
+
 func (r *PostgresRepository) SetAvailability(ctx context.Context, driverID string, status drivers.Availability) (drivers.Availability, error) {
 	if r.database == nil {
 		return "", ErrStoreUnavailable

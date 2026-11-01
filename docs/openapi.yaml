@@ -364,6 +364,26 @@ paths:
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/drivers/me/availability:
+    get:
+      tags: [Driver]
+      summary: Read the current driver's availability
+      description: Driver only. Returns the persisted status so the dashboard can recover after refresh.
+      security: [{ SessionCookie: [] }]
+      responses:
+        '200':
+          description: Current driver status.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { $ref: '#/components/schemas/DriverStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
     patch:
       tags: [Driver]
       summary: Set driver availability

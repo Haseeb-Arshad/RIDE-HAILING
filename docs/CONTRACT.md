@@ -1,6 +1,6 @@
 # API and domain contract
 
-**Status:** Implementation source of truth. Stage 3 schema/seed, Stage 4 API authentication, Stage 5 location/quote/ride routes, and Stage 6 driver/assignment/lifecycle routes are implemented locally. The migration, seed, and all database-backed checks await the supplied Supabase connection. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
+**Status:** Implementation source of truth. Stages 3–7 are implemented locally, including the rider/driver UI and persisted driver availability reads. The migration, seed, and all database-backed checks await the supplied Supabase connection. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
 
 ## 1. Domain vocabulary
 
@@ -38,6 +38,7 @@ Authorization rules:
 - A rider can read/cancel only their own ride. A driver can read/complete only a ride assigned to them.
 - A non-owner/non-assigned actor receives a concealed 404 for ride reads and cancellation/completion; role failures return 403.
 - A driver may attempt acceptance only while the ride is requested and the driver is eligible. Ineligibility or a competing winner is a 409 conflict.
+- A driver can read only their own persisted availability status; the dashboard reloads it from the API instead of inferring `offline` or `available` from the request list.
 - `/driver/requests` returns only eligible requested rides and omits rider identity/contact details.
 
 ## 3. Invariants and transaction rules
@@ -92,6 +93,7 @@ An eligible driver is in Lahore, `available`, category-compatible, and within th
 | `GET /api/v1/rides/{id}` | Owning rider or assigned driver | UUID path | `200` authorized ride |
 | `GET /api/v1/driver/requests` | Driver | Optional `limit` (default 25, max 50) and opaque `cursor` | `200` bounded eligible requests, oldest first |
 | `GET /api/v1/driver/assignment` | Driver | None | `200` current assignment or `{assignment:null}` |
+| `GET /api/v1/drivers/me/availability` | Driver | None | `200` current `offline`, `available`, or `busy` status |
 | `PATCH /api/v1/drivers/me/availability` | Driver | `{status:offline\|available}` | `200` updated status; busy cannot be set or cleared manually |
 | `POST /api/v1/rides/{id}/accept` | Eligible driver | No body | `200` assigned/current ride; conflict if another driver wins |
 | `POST /api/v1/rides/{id}/cancel` | Owning rider | No body | `200` cancelled/current ride |
