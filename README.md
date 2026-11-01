@@ -65,6 +65,14 @@ npm run dev
 
 Open <http://127.0.0.1:3000>. The API listens on <http://127.0.0.1:8080>; liveness is `/healthz` and PostgreSQL readiness is `/readyz`. The Next.js rewrite uses the server-only `API_ORIGIN` setting. With no database connection, liveness remains available while readiness and database-backed API routes return `503`.
 
+## Google Maps preview
+
+The rider workspace can display the seven seeded Lahore locations on Google Maps and focus the map on the selected pickup and destination. The API returns each public demo location's latitude and longitude for this purpose. This preview is optional: without a browser key, booking still uses the existing seeded locations and approximate Go estimates, and the map explains how to configure the provider.
+
+To enable the preview, add `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` to the ignored `apps/web/.env.local`, enable Maps JavaScript API and billing in Google Cloud, and restrict the browser key to the web origins and APIs it needs. Restart Next.js after changing the environment file. A browser key is visible to visitors by design, so apply website and API restrictions; never put a server key in a `NEXT_PUBLIC_` variable. See Google's [Maps JavaScript API setup](https://developers.google.com/maps/documentation/javascript/get-api-key) and [API key security guidance](https://developers.google.com/maps/api-security-best-practices).
+
+The map currently shows seeded stops only. It does not search arbitrary addresses, calculate road directions, or show live driver positions. Google Places and the server-side Routes API can be added in the next integration step; that will also require replacing the fixed-location-only quote and ride contract.
+
 ## Checks
 
 Run local backend and frontend checks:

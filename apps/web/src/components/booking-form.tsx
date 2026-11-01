@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type Category, type Location, type Quote, type QuoteInput, type Ride } from "@/lib/api";
 import { formatDistance, formatMoney } from "@/lib/format";
+import { GoogleRouteMap } from "@/components/google-route-map";
 
 type BookingFormProps = {
   locations: Location[];
@@ -235,9 +236,10 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
           <div className="panel-head">
             <div>
               <h2 id="route-preview-title">Your route</h2>
-              <p>A simple stop list, without a live map.</p>
+              <p>Map view for the seeded Lahore pickup points.</p>
             </div>
           </div>
+          <GoogleRouteMap locations={locations} pickupID={pickupID} destinationID={destinationID} />
           {pickup && destination ? (
             <div className="route-summary">
               <div className="route-rail" aria-hidden="true"><span className="route-dot route-dot-start" /><span className="route-line" /><span className="route-dot route-dot-end" /></div>

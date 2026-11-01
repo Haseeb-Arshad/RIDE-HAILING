@@ -19,6 +19,8 @@ export type Location = {
   name: string;
   area: string;
   city: "Lahore";
+  latitude: number;
+  longitude: number;
 };
 
 export type QuoteInput = {

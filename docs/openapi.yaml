@@ -535,12 +535,14 @@ components:
         user: { $ref: '#/components/schemas/User' }
     Location:
       type: object
-      required: [id, name, area, city]
+      required: [id, name, area, city, latitude, longitude]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
         area: { type: string }
         city: { type: string, const: Lahore }
+        latitude: { type: number, format: double, minimum: -90, maximum: 90 }
+        longitude: { type: number, format: double, minimum: -180, maximum: 180 }
     QuoteRequest:
       type: object
       additionalProperties: false

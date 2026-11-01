@@ -10,7 +10,7 @@ Copy-Item .env.local.example .env.local
 npm run dev
 ```
 
-Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in `.env.local`. Set `API_ORIGIN` to the server-side Go API URL; do not rename it to a `NEXT_PUBLIC_` variable. The API and migrated PostgreSQL database must be available for sign-in and booking. Create the demo email/password accounts in Supabase Auth, then run the root seed command to map them to rider and driver profiles.
+Set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in `.env.local`. Set `API_ORIGIN` to the server-side Go API URL; do not rename it to a `NEXT_PUBLIC_` variable. `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` is optional; add a website-restricted key with Maps JavaScript API enabled to display the seeded Lahore map preview. The API and migrated PostgreSQL database must be available for sign-in and booking. Create the demo email/password accounts in Supabase Auth, then run the root seed command to map them to rider and driver profiles.
 
 The rider workspace is `/rider`, the driver workspace is `/driver`, and saved ride status is `/rides/{id}`. Supabase role metadata is not used for authorization; Go resolves roles from the private `ride_hailing.users` profile table.
 

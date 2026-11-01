@@ -30,12 +30,16 @@ const pickup: Location = {
   name: "Liberty Market",
   area: "Gulberg III",
   city: "Lahore",
+  latitude: 31.5113,
+  longitude: 74.3436,
 };
 const destination: Location = {
   id: "10000000-0000-4000-8000-000000000002",
   name: "MM Alam Road",
   area: "Gulberg III",
   city: "Lahore",
+  latitude: 31.5147,
+  longitude: 74.3524,
 };
 const riderSession: SessionResponse = {
   user: { id: "20000000-0000-4000-8000-000000000001", email: "rider@example.test", display_name: "Demo Rider", role: "rider" },

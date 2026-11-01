@@ -104,7 +104,7 @@ func TestRideRoutesEnforceBearerRoleAndStrictRequestFields(t *testing.T) {
 	locationRequest := httptest.NewRequest(http.MethodGet, "/api/v1/locations", nil)
 	locationRequest.Header.Set("Authorization", "Bearer "+driverCookie)
 	router.ServeHTTP(locations, locationRequest)
-	if locations.Code != http.StatusOK || !strings.Contains(locations.Body.String(), "Liberty Market") {
+	if locations.Code != http.StatusOK || !strings.Contains(locations.Body.String(), "Liberty Market") || !strings.Contains(locations.Body.String(), `"latitude":0`) || !strings.Contains(locations.Body.String(), `"longitude":0`) {
 		t.Fatalf("authenticated locations status=%d body=%s", locations.Code, locations.Body.String())
 	}
 
