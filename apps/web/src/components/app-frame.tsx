@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { CarFront, LogOut, MapPin, UserRound } from "lucide-react";
+import { Brand } from "@/components/brand";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth-provider";
 
@@ -29,19 +31,18 @@ export function AppFrame({ children }: Readonly<{ children: React.ReactNode }>) 
   return (
     <div className="app-shell">
       <header className="app-header">
-        <Link className="brand" href="/" aria-label="Ride Lahore home">
-          <span className="brand-mark" aria-hidden="true">R</span>
-          <span>Ride Lahore</span>
-        </Link>
+        <Brand />
+        {session && <nav className="workspace-nav" aria-label="Workspace"><Link href={session.user.role === "driver" ? "/driver" : "/rider"}>{session.user.role === "driver" ? <CarFront size={17} aria-hidden="true" /> : <MapPin size={17} aria-hidden="true" />}{session.user.role === "driver" ? "Driver workspace" : "Book a ride"}</Link></nav>}
         <div className="header-account">
           {session && (
             <span className="account-name">
-              <span className="account-dot" aria-hidden="true" />
+              <span className="account-avatar"><UserRound size={16} aria-hidden="true" /></span>
               {session.user.display_name}
             </span>
           )}
           <button className="button button-quiet button-small" type="button" onClick={() => void handleSignOut()} disabled={busy}>
             {busy ? "Signing out…" : "Sign out"}
+            <LogOut size={15} aria-hidden="true" />
           </button>
         </div>
       </header>

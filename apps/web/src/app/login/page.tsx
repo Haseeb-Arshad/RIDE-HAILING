@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
+import { ArrowLeft, ArrowRight, LockKeyhole } from "lucide-react";
+import { Brand } from "@/components/brand";
 import { ApiError } from "@/lib/api";
 import { destinationFor, useAuth } from "@/lib/auth-provider";
 
@@ -47,18 +49,16 @@ export default function LoginPage() {
   return (
     <main className="login-layout">
       <header className="app-header login-header">
-        <Link className="brand" href="/" aria-label="Ride Lahore home">
-          <span className="brand-mark" aria-hidden="true">R</span>
-          <span>Ride Lahore</span>
-        </Link>
-        <Link className="button button-quiet button-small" href="/">Back to home</Link>
+        <Brand />
+        <Link className="button button-quiet button-small" href="/"><ArrowLeft size={16} aria-hidden="true" />Back to home</Link>
       </header>
 
       <section className="login-panel" aria-labelledby="login-title">
         <div className="login-intro">
-          <p className="eyebrow">LAHORE · RIDE BOOKING DEMO</p>
+          <span className="login-symbol"><LockKeyhole size={23} aria-hidden="true" /></span>
+          <p className="eyebrow">YOUR NEXT JOURNEY STARTS HERE</p>
           <h1 id="login-title">Welcome back.</h1>
-          <p>Sign in with an approved Supabase Auth account to open the rider or driver workspace.</p>
+          <p>Choose your demo account and sign in. A ride across Lahore is just a few steps away.</p>
         </div>
 
         <form className="form-stack" onSubmit={submit}>
@@ -80,7 +80,7 @@ export default function LoginPage() {
               onChange={(event) => setPassword(event.target.value)}
               required
             />
-            <span className="field-hint">Use the password set for this demo account in Supabase Auth.</span>
+            <span className="field-hint">Use the password provided for your demo account.</span>
           </div>
           {error && <p className="notice notice-error" role="alert">{error}</p>}
           {(state.status === "unavailable" || state.status === "unlinked") && !error && (
@@ -88,12 +88,12 @@ export default function LoginPage() {
           )}
           <button className="button button-primary button-wide" type="submit" disabled={pending || password.length === 0}>
             {pending ? "Signing in…" : "Continue"}
-            <span aria-hidden="true">→</span>
+            <ArrowRight size={18} aria-hidden="true" />
           </button>
         </form>
 
         <p className="login-footnote">
-          Supabase Auth manages your sign-in session. The ride service receives only an access token, never your password.
+          <LockKeyhole size={14} aria-hidden="true" /> Secure sign-in. Your password stays with our authentication provider.
         </p>
       </section>
       <footer className="app-footer login-footer">

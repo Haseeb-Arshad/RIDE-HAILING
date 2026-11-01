@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { MapPin } from "lucide-react";
 import { AppFrame } from "@/components/app-frame";
 import { AuthGuard } from "@/components/auth-guard";
 import { BookingForm } from "@/components/booking-form";
@@ -45,13 +46,13 @@ function RiderWorkspace() {
       <main className="workspace">
         <div className="page-heading">
           <div>
-            <p className="eyebrow">RIDER WORKSPACE · LAHORE</p>
+            <p className="eyebrow"><MapPin size={14} aria-hidden="true" /> LAHORE, PAKISTAN</p>
             <h1>Where to, {name}?</h1>
-            <p>Choose two Lahore demo locations. The ride service will calculate an approximate fare and pickup estimate.</p>
+            <p>A familiar place or somewhere new. Choose your stops and we’ll take it from there.</p>
           </div>
           <div className="heading-aside">
-            <strong>Rider account</strong>
-            <span>Seeded demo · Map setup is optional</span>
+            <strong>Made for your city</strong>
+            <span>7 demo stops across Lahore</span>
           </div>
         </div>
 
