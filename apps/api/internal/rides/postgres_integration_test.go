@@ -84,60 +84,64 @@ func TestPostgresRideQuoteCreationAndReplay(t *testing.T) {
 }
 
 func TestPostgresConcurrentSameKeyCreatesOneRide(t *testing.T) {
-	pool := openRideIntegrationPool(t, 6)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	riderID := insertCommittedIntegrationRider(t, ctx, pool)
-	defer cleanupIntegrationRider(t, pool, riderID)
+	for iteration := 1; iteration <= lifecycleRaceIterations; iteration++ {
+		t.Run(fmt.Sprintf("iteration_%02d", iteration), func(t *testing.T) {
+			pool := openRideIntegrationPool(t, 6)
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			riderID := insertCommittedIntegrationRider(t, ctx, pool)
+			defer cleanupIntegrationRider(t, pool, riderID)
 
-	service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
-	request := QuoteRequest{PickupLocationID: integrationPickupID, DestinationLocationID: integrationDestinationID, Category: "economy"}
-	start := make(chan struct{})
-	results := make(chan createResult, 2)
-	var workers sync.WaitGroup
-	for range 2 {
-		workers.Add(1)
-		go func() {
-			defer workers.Done()
-			<-start
-			ride, replay, err := service.CreateRide(ctx, riderID, request, "integration-concurrent-key")
-			results <- createResult{ride: ride, replay: replay, err: err}
-		}()
-	}
-	close(start)
-	workers.Wait()
-	close(results)
+			service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
+			request := QuoteRequest{PickupLocationID: integrationPickupID, DestinationLocationID: integrationDestinationID, Category: "economy"}
+			start := make(chan struct{})
+			results := make(chan createResult, 2)
+			var workers sync.WaitGroup
+			for range 2 {
+				workers.Add(1)
+				go func() {
+					defer workers.Done()
+					<-start
+					ride, replay, err := service.CreateRide(ctx, riderID, request, "integration-concurrent-key")
+					results <- createResult{ride: ride, replay: replay, err: err}
+				}()
+			}
+			close(start)
+			workers.Wait()
+			close(results)
 
-	var rideID string
-	createdCount, replayCount := 0, 0
-	for result := range results {
-		if result.err != nil {
-			t.Fatalf("concurrent create failed: %v", result.err)
-		}
-		if rideID == "" {
-			rideID = result.ride.ID
-		} else if result.ride.ID != rideID {
-			t.Fatalf("concurrent requests returned different rides: %s and %s", rideID, result.ride.ID)
-		}
-		if result.replay {
-			replayCount++
-		} else {
-			createdCount++
-		}
-	}
-	if createdCount != 1 || replayCount != 1 {
-		t.Fatalf("concurrent outcomes created=%d replayed=%d, want one of each", createdCount, replayCount)
-	}
+			var rideID string
+			createdCount, replayCount := 0, 0
+			for result := range results {
+				if result.err != nil {
+					t.Fatalf("concurrent create failed: %v", result.err)
+				}
+				if rideID == "" {
+					rideID = result.ride.ID
+				} else if result.ride.ID != rideID {
+					t.Fatalf("concurrent requests returned different rides: %s and %s", rideID, result.ride.ID)
+				}
+				if result.replay {
+					replayCount++
+				} else {
+					createdCount++
+				}
+			}
+			if createdCount != 1 || replayCount != 1 {
+				t.Fatalf("concurrent outcomes created=%d replayed=%d, want one of each", createdCount, replayCount)
+			}
 
-	var rideCount, keyCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.rides WHERE rider_id = $1::uuid`, riderID).Scan(&rideCount); err != nil {
-		t.Fatalf("count concurrent rides: %v", err)
-	}
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.idempotency_keys WHERE rider_id = $1::uuid AND idempotency_key = 'integration-concurrent-key'`, riderID).Scan(&keyCount); err != nil {
-		t.Fatalf("count concurrent idempotency keys: %v", err)
-	}
-	if rideCount != 1 || keyCount != 1 {
-		t.Fatalf("concurrent database rows ride=%d key=%d, want one each", rideCount, keyCount)
+			var rideCount, keyCount int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.rides WHERE rider_id = $1::uuid`, riderID).Scan(&rideCount); err != nil {
+				t.Fatalf("count concurrent rides: %v", err)
+			}
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.idempotency_keys WHERE rider_id = $1::uuid AND idempotency_key = 'integration-concurrent-key'`, riderID).Scan(&keyCount); err != nil {
+				t.Fatalf("count concurrent idempotency keys: %v", err)
+			}
+			if rideCount != 1 || keyCount != 1 {
+				t.Fatalf("concurrent database rows ride=%d key=%d, want one each", rideCount, keyCount)
+			}
+		})
 	}
 }
 
@@ -176,8 +180,8 @@ func insertIntegrationRider(t *testing.T, ctx context.Context, tx pgx.Tx) string
 	var riderID string
 	email := fmt.Sprintf("stage5-rollback-%d@example.test", time.Now().UnixNano())
 	err := tx.QueryRow(ctx, `
-		INSERT INTO ride_hailing.users (email, display_name, role, password_hash)
-		VALUES ($1, 'Stage 5 Rollback Rider', 'rider', 'integration-test-hash')
+		INSERT INTO ride_hailing.users (email, display_name, role)
+		VALUES ($1, 'Stage 5 Rollback Rider', 'rider')
 		RETURNING id::text`, email).Scan(&riderID)
 	if err != nil {
 		t.Fatalf("insert rollback-only rider: %v", err)
@@ -190,8 +194,8 @@ func insertCommittedIntegrationRider(t *testing.T, ctx context.Context, pool *pg
 	var riderID string
 	email := fmt.Sprintf("stage5-concurrent-%d@example.test", time.Now().UnixNano())
 	err := pool.QueryRow(ctx, `
-		INSERT INTO ride_hailing.users (email, display_name, role, password_hash)
-		VALUES ($1, 'Stage 5 Concurrent Rider', 'rider', 'integration-test-hash')
+		INSERT INTO ride_hailing.users (email, display_name, role)
+		VALUES ($1, 'Stage 5 Concurrent Rider', 'rider')
 		RETURNING id::text`, email).Scan(&riderID)
 	if err != nil {
 		t.Fatalf("insert concurrent integration rider: %v", err)
