@@ -44,6 +44,9 @@ test("rider books a ride that a separate driver context accepts and completes", 
       "rider",
     );
     await expect(riderPage.getByLabel("Pickup")).toBeVisible({ timeout: 30_000 });
+    if (!process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim()) {
+      await expect(riderPage.getByText("Google Maps is ready to connect")).toBeVisible();
+    }
     await riderPage.getByLabel("Pickup").selectOption("10000000-0000-4000-8000-000000000001");
     await riderPage.getByLabel("Destination").selectOption("10000000-0000-4000-8000-000000000002");
     await riderPage.getByRole("button", { name: "Review fare estimate" }).click();

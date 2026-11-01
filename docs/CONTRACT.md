@@ -9,7 +9,7 @@
 - Ride statuses: `requested`, `accepted`, `completed`, `cancelled`.
 - Driver statuses: `offline`, `available`, `busy`.
 - Assignment statuses: `active`, `completed`, `cancelled`. The demo creates at most one assignment row per ride and never reassigns a ride.
-- City: `Lahore` only. Location records and demo driver coordinates are seeded, fixed fixtures.
+- City: `Lahore` only. Location records and demo driver coordinates are seeded, fixed fixtures. Public location responses include their coordinates for map display.
 - IDs are UUIDs. Timestamps are UTC RFC 3339 values.
 
 ### Ride transition matrix
@@ -86,7 +86,7 @@ An eligible driver is in Lahore, `available`, category-compatible, and within th
 | `GET /healthz` | Probe | None | `200` liveness |
 | `GET /readyz` | Probe | None | `200` if PostgreSQL is reachable; otherwise `503` |
 | `GET /api/v1/auth/me` | Authenticated | `Authorization: Bearer <Supabase access token>` | `200` current application user profile |
-| `GET /api/v1/locations` | Authenticated | None | `200` seeded Lahore locations |
+| `GET /api/v1/locations` | Authenticated | None | `200` seeded Lahore locations with coordinates |
 | `POST /api/v1/quotes` | Rider | `{pickup_location_id,destination_location_id,category}` | `200` server-generated estimate |
 | `POST /api/v1/rides` | Rider | Same quote request + `Idempotency-Key` | `201` new ride; `200` idempotent replay |
 | `GET /api/v1/rides/current` | Rider | None | `200` current open ride or `{ride:null}` |

@@ -51,7 +51,7 @@ function RiderWorkspace() {
           </div>
           <div className="heading-aside">
             <strong>Rider account</strong>
-            <span>Seeded demo · No live map</span>
+            <span>Seeded demo · Map setup is optional</span>
           </div>
         </div>
 

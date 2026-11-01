@@ -4,8 +4,8 @@ import { BookingForm } from "@/components/booking-form";
 import { RideProgress, StatusPill } from "@/components/ride-status";
 import type { Location, Quote, Ride } from "@/lib/api";
 
-const pickup: Location = { id: "10000000-0000-4000-8000-000000000001", name: "Liberty Market", area: "Gulberg III", city: "Lahore" };
-const destination: Location = { id: "10000000-0000-4000-8000-000000000002", name: "MM Alam Road", area: "Gulberg III", city: "Lahore" };
+const pickup: Location = { id: "10000000-0000-4000-8000-000000000001", name: "Liberty Market", area: "Gulberg III", city: "Lahore", latitude: 31.5113, longitude: 74.3436 };
+const destination: Location = { id: "10000000-0000-4000-8000-000000000002", name: "MM Alam Road", area: "Gulberg III", city: "Lahore", latitude: 31.5147, longitude: 74.3524 };
 const quote: Quote = { estimated_fare_paisa: 23_676, estimated_distance_meters: 2250, pickup_eta_minutes: null, currency: "PKR", approximate: true };
 const ride: Ride = {
   id: "40000000-0000-4000-8000-000000000001",
@@ -71,7 +71,7 @@ describe("booking form", () => {
     chooseRoute();
     fireEvent.click(screen.getByRole("button", { name: "Review fare estimate" }));
 
-    expect(screen.getByRole("status").textContent).toContain("estimate");
+    expect(screen.getByText("Asking the ride service for an estimate…")).toBeTruthy();
     expect((screen.getByRole("button", { name: "Calculating estimate…" }) as HTMLButtonElement).disabled).toBe(true);
     resolveFetch?.(jsonResponse(quote));
     await screen.findByRole("button", { name: /request this ride/i });

@@ -46,7 +46,7 @@ export default function Home() {
 
       <footer className="app-footer landing-footer">
         <span>Ride Lahore</span>
-        <span>Approximate demo fares · No live map or routing</span>
+        <span>Approximate demo fares · No live route estimates</span>
       </footer>
     </main>
   );

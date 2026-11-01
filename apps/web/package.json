@@ -11,6 +11,7 @@
     "test:e2e": "node --env-file=../../.env --env-file=.env.local ./node_modules/playwright/cli.js test"
   },
   "dependencies": {
+    "@googlemaps/js-api-loader": "^2.1.3",
     "@supabase/ssr": "0.12.7",
     "@supabase/supabase-js": "2.118.0",
     "next": "16.4.3",
@@ -22,6 +23,7 @@
     "@tailwindcss/turbopack": "^4",
     "@testing-library/dom": "10.4.1",
     "@testing-library/react": "16.3.0",
+    "@types/google.maps": "^3.66.9",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",

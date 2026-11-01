@@ -22,8 +22,8 @@ type Location struct {
 	Name      string  `json:"name"`
 	Area      string  `json:"area"`
 	City      string  `json:"city"`
-	Latitude  float64 `json:"-"`
-	Longitude float64 `json:"-"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
 }
 
 type AvailableDriver struct {
