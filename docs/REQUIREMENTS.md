@@ -6,6 +6,10 @@ The target is a runnable, tested Lahore ride-booking assessment implemented as o
 
 The plan refers to a separate five-page “Technical Assessment — Lead Full Stack / Backend Engineer.” That source document was not included with the pasted plan, so this first-pass map cannot independently confirm criteria that appear only in the original assessment. Reconcile this map against that document before treating the Stage 1 acceptance gate as complete.
 
+## Current verification snapshot
+
+On 2026-11-02, the configured Supabase project was migrated and seeded; the PostgreSQL integration suite and real Supabase Auth rider/driver Playwright journey passed. The web unit tests, lint, production build, Go test suite, and GitHub API/web checks also passed. This is point-in-time evidence for the current demo, not a production-readiness or missing-source assessment sign-off.
+
 ## MUST BUILD
 
 | Requirement | API and persistence evidence | Frontend evidence | Verification evidence | Boundary / limitation |
@@ -41,8 +45,8 @@ The assessment demo does not implement real maps/routing, fresh GPS tracking, sp
 | PostgreSQL ride creation | Success; identical endpoints; unsupported category; invalid UUID; missing idempotency key; same key/same payload sequential and concurrent; same key/different payload; second open ride | API integration tests against actual PostgreSQL; database row counts and constraints inspected |
 | Quote and matching | Both categories; no-driver ETA; eligible category/city/radius; offline, wrong-category, and out-of-radius drivers | Pricing/matching unit tests plus DB-backed service/API tests where state is read |
 | Authorization | Rider cannot see another rider’s ride; wrong driver cannot complete; forged owner/driver/fare/status inputs ignored or rejected; role enforcement | HTTP tests covering status and error envelope |
-| Lifecycle and races | Successful accept; two drivers race for one ride; one driver races for two rides; accept-vs-cancel; complete-vs-cancel; invalid terminal transitions; repeat action behavior; assignment release | PostgreSQL concurrency tests with barriers/coordination, followed by invariant queries; tests are present but remain NOT VERIFIED until run against configured PostgreSQL |
-| Auth and authorization | Valid/invalid/expired signature, issuer, audience, unknown profile, role, ownership, Origin, metadata not trusted | Go JWT and HTTP tests; Supabase profile mapping against PostgreSQL; live browser sign-in remains NOT VERIFIED until run against the configured project |
+| Lifecycle and races | Successful accept; two drivers race for one ride; one driver races for two rides; accept-vs-cancel; complete-vs-cancel; invalid terminal transitions; repeat action behavior; assignment release | PostgreSQL integration suite passed against the configured Supabase database on 2026-11-02, including lifecycle/concurrency cases and fixture cleanup |
+| Auth and authorization | Valid/invalid/expired signature, issuer, audience, unknown profile, role, ownership, Origin, metadata not trusted | Go JWT and HTTP tests passed; real Supabase Auth sign-in and profile mapping passed in the live browser journey on 2026-11-02 |
 | Frontend behavior | Login errors; quote loading/error/no ETA; request pending, duplicate suppression and stable retry key; 409 conflict; empty driver list; cancellation; accepted/completed terminal display; 401 expiry | Vitest and React Testing Library with API mocks; mocks prove UI behavior only |
 | Runtime and submission | Separate Go/Next process startup, Supabase migration/seed, liveness/readiness, same-origin proxy, frontend and backend build, clean restart/persistence | Exact commands and outcomes recorded in README/final audit; no unrun check described as passing |
 

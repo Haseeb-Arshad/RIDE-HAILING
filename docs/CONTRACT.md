@@ -1,6 +1,6 @@
 # API and domain contract
 
-**Status:** Implementation source of truth. The local code includes ride lifecycle behavior, rider/driver UI, Supabase Auth integration, and local test coverage. Migration, seed, PostgreSQL race tests, and real browser journey require the configured Supabase project and demo accounts. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
+**Status:** Implementation source of truth. The Supabase migrations, seed, PostgreSQL integration suite, and real browser journey were run successfully against the configured project on 2026-11-02. Re-run them after relevant code, schema, or Auth changes. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
 
 ## 1. Domain vocabulary
 
@@ -51,7 +51,7 @@ Authorization rules:
 4. A driver is `busy` exactly while holding an active assignment. Acceptance and terminal release update ride, assignment, and driver rows in one PostgreSQL transaction.
 5. Ride and driver state are rechecked after acquiring locks. Acceptance locks the ride row first and then the driver row, in a consistent order, and commits assignment plus both status changes together.
 6. PostgreSQL constraints backstop one-open-ride, one-assignment-per-ride, one-active-assignment-per-driver, and idempotency-key uniqueness. A process mutex is not a concurrency guarantee.
-7. Application tables live in the private `ride_hailing` schema, omitted from this repository's Supabase Data API schema list. The remote project must keep it omitted too. RLS is enabled and forced on every table with no browser-facing policies or grants. Go uses server-side qualified SQL, maps verified Supabase subjects to application profiles, and enforces role/ownership rules.
+7. Application tables live in the private `ride_hailing` schema, omitted from this repository's Supabase Data API schema list. On 2026-11-02, a request to the project's Data API for this schema returned `PGRST106` (not exposed), and PostgreSQL reported no schema usage grants for `anon`, `authenticated`, or `service_role`. RLS is enabled and forced on every table with no browser-facing policies or grants. Recheck the remote setting if project configuration changes. Go uses server-side qualified SQL, maps verified Supabase subjects to application profiles, and enforces role/ownership rules.
 8. Quote inputs contain only pickup ID, destination ID, and category. Creation recomputes distance/fare on the server and persists the quote snapshot. The client cannot select a driver or submit a trusted price.
 9. Every create request has a rider-scoped `Idempotency-Key` (1–128 visible ASCII characters) and canonical request fingerprint over the normalized pickup UUID, destination UUID, and category. Same rider/key and same fingerprint returns the same ride; the response is HTTP 200 and reflects that ride’s current persisted state. Same key with a different fingerprint is 409. A new key while the rider already has an open ride is 409.
 
@@ -125,9 +125,9 @@ Quote response:
 
 `pickup_eta_minutes` is integer or `null`. A ride resource contains its UUID, owner identity restricted as above, pickup and destination snapshots, category, persisted fare/distance/currency snapshot, status, creation/update times, and assignment details only after acceptance. Driver request summaries omit rider identity/contact data. Unknown enum values and extra authority-bearing client fields are rejected or ignored; they never override server state.
 
-## 8. Remaining verification gates
+## 8. Verification status and remaining gates
 
 - Reconcile the original five-page assessment; it was not included with the supplied execution plan, so criteria found only there are unknown.
-- Configure the Supabase connection and asymmetric Auth signing key, create the three email/password Auth users, apply migrations, and run the seed.
-- Run PostgreSQL schema, profile mapping, ride, idempotency, assignment, release, and concurrency checks against the configured Supabase project. Until then, database-backed behavior is unverified.
-- Run the two-browser Playwright journey against that same database and record its actual result.
+- The configured Supabase project accepted a real browser sign-in and Go JWT validation; both migrations, seed, and the PostgreSQL integration suite passed on 2026-11-02.
+- The two-context Playwright rider/driver journey passed on 2026-11-02. Its dedicated demo accounts and completed ride records remain in the connected project for repeatable manual testing.
+- These checks do not cover hosted deployment, production monitoring, backup/restore, load testing, live location, routing, payments, or notifications.

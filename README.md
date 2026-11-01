@@ -4,7 +4,9 @@ A focused ride-booking demo for Lahore. The Next.js app presents rider and drive
 
 ## Project status
 
-The repository includes rider and driver flows, Supabase Auth integration, profile-based role checks, PostgreSQL race tests, frontend tests, and a real two-browser Playwright journey. Local unit and UI checks can run without a database. The Supabase migration, seed, database race tests, and browser journey still require the project connection and demo-account settings in ignored environment files; they are not verified until those commands complete successfully.
+The connected demo was verified against the supplied Supabase project on 2026-11-02. Both application migrations were applied, the seed linked three Auth accounts and added seven Lahore locations plus two driver profiles, the PostgreSQL integration suite passed, and the Playwright rider-to-driver journey passed. Web lint, 18 frontend tests, the production build, Go tests, and the GitHub API/web checks also passed.
+
+These checks prove the current demo flow against this project configuration; they do not establish production readiness. Re-run the database integration and browser checks after relevant code, schema, or Auth configuration changes. Local unit and UI tests can run without a database. GitHub Actions does not connect to Supabase, so its green checks are not a substitute for the PostgreSQL integration run.
 
 The execution plan references a separate five-page assessment source that was not included with the pasted plan. Criteria present only in that missing source remain unverified.
 
@@ -25,6 +27,7 @@ Prerequisites: Go 1.26 or newer, Node.js 20.9 or newer, and npm. The Go module s
 
 1. Copy `.env.example` to the ignored repository-root `.env`. Set `DATABASE_URL` to the project's PostgreSQL connection string and `SUPABASE_URL` to its HTTPS project URL. Keep both server-side.
 2. In Supabase Auth, create and confirm three email/password accounts matching the demo emails in `.env.example`: `rider@example.test`, `driver.one@example.test`, and `driver.two@example.test`. Choose their passwords in Supabase Auth. For the browser test, put the rider and driver test credentials in the corresponding `E2E_*` variables in `.env`.
+   In this configured development checkout, the active demo credentials are already stored in the ignored root `.env`; never copy them into tracked files.
 3. Configure the Supabase project to sign access tokens with an asymmetric ES256 or RS256 signing key. The Go API verifies against the project's public JWKS and intentionally does not accept the legacy shared-secret HS256 algorithm.
 4. Copy `apps/web/.env.local.example` to `apps/web/.env.local`; set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` from the project's API settings. The publishable key is intended for browser use. Do not put a secret API key there.
 5. Confirm `ride_hailing` is not listed among the project's exposed Data API schemas. Then apply the migration:
@@ -99,7 +102,7 @@ Set-Location apps/web
 npm run test:e2e
 ```
 
-The browser journey requires a migrated and seeded database, the public Supabase web settings, and the `E2E_RIDER_*` and `E2E_DRIVER_*` credentials in the ignored root `.env`. Use demo accounts without an active ride before running it. Component tests use API mocks and demonstrate UI behavior only; they do not prove PostgreSQL persistence.
+The browser journey requires a migrated and seeded database, the public Supabase web settings, and the `E2E_RIDER_*` and `E2E_DRIVER_*` credentials in the ignored root `.env`. It first completes any existing assignment on the dedicated demo driver account so reruns start from a usable state. The test leaves completed demo ride records in Supabase. Component tests use API mocks and demonstrate UI behavior only; they do not prove PostgreSQL persistence.
 
 The GitHub Actions workflow runs Go format, unit/HTTP tests and vet, plus frontend tests, lint, type checking, and production build. It does not connect to PostgreSQL, so database integration tests skip there unless a separate database test job is configured.
 
