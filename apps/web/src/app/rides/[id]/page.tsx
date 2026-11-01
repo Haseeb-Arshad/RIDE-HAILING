@@ -106,7 +106,7 @@ function RideWorkspace({ rideID }: Readonly<{ rideID: string }>) {
     setError(null);
     requestVersion.current += 1;
     try {
-      const updated = await api.cancelRide(ride.id, session.csrf_token);
+      const updated = await api.cancelRide(ride.id);
       applyRide(updated);
     } catch (reason) {
       setError(reason instanceof ApiError ? reason.message : "The ride could not be cancelled.");

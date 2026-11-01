@@ -1,356 +1,187 @@
 package httptransport
 
 import (
-	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/auth"
-	"golang.org/x/crypto/bcrypt"
 )
 
-const testAppOrigin = "http://127.0.0.1:3000"
+const testAppOrigin = "http://localhost:3000"
 
-func TestLoginMeAndLogoutSessionFlow(t *testing.T) {
+func TestAuthMeRequiresBearerTokenAndReturnsMappedProfile(t *testing.T) {
 	repository := newHTTPAuthRepository(t)
-	service := auth.NewService(repository)
-	router, _ := newAuthTestRouter(service, false)
+	router, _ := newAuthTestRouter(newHTTPAuthService(repository))
 
-	loginResponse := performLogin(t, router, "rider@example.test", "correct horse battery staple")
-	if loginResponse.Code != http.StatusOK {
-		t.Fatalf("login status = %d, body=%s", loginResponse.Code, loginResponse.Body.String())
-	}
-	var response sessionResponse
-	if err := json.Unmarshal(loginResponse.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode login response: %v", err)
-	}
-	if response.User.ID != "20000000-0000-4000-8000-000000000001" || response.User.Role != "rider" || response.CSRFToken == "" {
-		t.Fatalf("unexpected login response: %+v", response)
-	}
-	if strings.Contains(loginResponse.Body.String(), loginResponse.Result().Cookies()[0].Value) {
-		t.Fatal("session cookie token was returned in the response body")
-	}
-	cookies := loginResponse.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Name != sessionCookieName || !cookies[0].HttpOnly || cookies[0].Secure || cookies[0].SameSite != http.SameSiteLaxMode || cookies[0].Path != "/" {
-		t.Fatalf("unexpected local session cookie: %+v", cookies)
-	}
-	if cookies[0].MaxAge != int(auth.SessionLifetime.Seconds()) {
-		t.Fatalf("cookie MaxAge = %d, want %d", cookies[0].MaxAge, int(auth.SessionLifetime.Seconds()))
-	}
-	if loginResponse.Header().Get("Cache-Control") != "no-store" {
-		t.Fatal("login response is missing Cache-Control: no-store")
-	}
-
-	meRequest := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
-	meRequest.AddCookie(cookies[0])
-	meResponse := httptest.NewRecorder()
-	router.ServeHTTP(meResponse, meRequest)
-	if meResponse.Code != http.StatusOK {
-		t.Fatalf("me status = %d, body=%s", meResponse.Code, meResponse.Body.String())
-	}
-	var me sessionResponse
-	if err := json.Unmarshal(meResponse.Body.Bytes(), &me); err != nil {
-		t.Fatalf("decode me response: %v", err)
-	}
-	if me.User.ID != response.User.ID || me.CSRFToken != response.CSRFToken {
-		t.Fatalf("me did not return the current session identity and CSRF token: %+v", me)
+	for name, request := range map[string]*http.Request{
+		"missing token": httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil),
+		"cookie is not accepted": func() *http.Request {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+			req.AddCookie(&http.Cookie{Name: "ride_session", Value: "rider@example.test"})
+			return req
+		}(),
+		"wrong scheme": func() *http.Request {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+			req.Header.Set("Authorization", "Basic rider@example.test")
+			return req
+		}(),
+		"unknown token": func() *http.Request {
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+			req.Header.Set("Authorization", "Bearer unrecognized")
+			return req
+		}(),
+	} {
+		t.Run(name, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != http.StatusUnauthorized {
+				t.Fatalf("status = %d, want 401: %s", response.Code, response.Body.String())
+			}
+		})
 	}
 
-	missingCSRF := performLogout(router, cookies[0], testAppOrigin, "")
-	if missingCSRF.Code != http.StatusForbidden {
-		t.Fatalf("missing CSRF status = %d, want 403", missingCSRF.Code)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	request.Header.Set("Authorization", "Bearer rider@example.test")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("valid bearer status = %d, body=%s", response.Code, response.Body.String())
 	}
-	badCSRF := performLogout(router, cookies[0], testAppOrigin, "wrong-token")
-	if badCSRF.Code != http.StatusForbidden {
-		t.Fatalf("mismatched CSRF status = %d, want 403", badCSRF.Code)
+	var body sessionResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode profile response: %v", err)
 	}
-	badOrigin := performLogout(router, cookies[0], "https://attacker.example", response.CSRFToken)
-	if badOrigin.Code != http.StatusForbidden {
-		t.Fatalf("mismatched Origin status = %d, want 403", badOrigin.Code)
+	want := repository.users["rider@example.test"]
+	if body.User != want || response.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("profile response = %+v, cache-control=%q", body, response.Header().Get("Cache-Control"))
 	}
-
-	logoutResponse := performLogout(router, cookies[0], testAppOrigin, response.CSRFToken)
-	if logoutResponse.Code != http.StatusNoContent {
-		t.Fatalf("logout status = %d, body=%s", logoutResponse.Code, logoutResponse.Body.String())
-	}
-	cleared := logoutResponse.Result().Cookies()
-	if len(cleared) != 1 || cleared[0].Name != sessionCookieName || cleared[0].MaxAge != -1 || !cleared[0].HttpOnly {
-		t.Fatalf("logout did not clear the session cookie: %+v", cleared)
-	}
-
-	meAfterLogout := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
-	meAfterLogout.AddCookie(cookies[0])
-	unauthenticated := httptest.NewRecorder()
-	router.ServeHTTP(unauthenticated, meAfterLogout)
-	if unauthenticated.Code != http.StatusUnauthorized {
-		t.Fatalf("revoked session status = %d, want 401", unauthenticated.Code)
+	if strings.Contains(response.Body.String(), "csrf_token") || response.Header().Get("Set-Cookie") != "" {
+		t.Fatalf("Supabase profile response still uses app-managed session state: %s", response.Body.String())
 	}
 }
 
-func TestLoginOriginAndCredentialErrorsAreGeneric(t *testing.T) {
+func TestAuthMeRejectsUnlinkedProfilesAndReportsBackendFailures(t *testing.T) {
 	repository := newHTTPAuthRepository(t)
-	service := auth.NewService(repository)
-	router, _ := newAuthTestRouter(service, false)
+	repository.tokenSubjects["unlinked-access"] = "30000000-0000-4000-8000-000000000099"
+	router, _ := newAuthTestRouter(newHTTPAuthService(repository))
 
-	missingOriginRequest := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(`{"email":"rider@example.test","password":"correct horse battery staple"}`))
-	missingOriginRequest.Header.Set("Content-Type", "application/json")
-	missingOriginResponse := httptest.NewRecorder()
-	router.ServeHTTP(missingOriginResponse, missingOriginRequest)
-	if missingOriginResponse.Code != http.StatusForbidden {
-		t.Fatalf("login without Origin status = %d, want 403", missingOriginResponse.Code)
-	}
-
-	badPassword := performLogin(t, router, "rider@example.test", "not-the-password")
-	unknownUser := performLogin(t, router, "missing@example.test", "not-the-password")
-	if badPassword.Code != http.StatusUnauthorized || unknownUser.Code != http.StatusUnauthorized {
-		t.Fatalf("credential failures: known=%d unknown=%d, want both 401", badPassword.Code, unknownUser.Code)
-	}
-	var badError, unknownError errorEnvelope
-	if err := json.Unmarshal(badPassword.Body.Bytes(), &badError); err != nil {
-		t.Fatalf("decode known-user error: %v", err)
-	}
-	if err := json.Unmarshal(unknownUser.Body.Bytes(), &unknownError); err != nil {
-		t.Fatalf("decode unknown-user error: %v", err)
-	}
-	if badError.Error.Code != unknownError.Error.Code || badError.Error.Message != unknownError.Error.Message {
-		t.Fatalf("credential error leaks account existence: known=%+v unknown=%+v", badError.Error, unknownError.Error)
-	}
-}
-
-func TestBothSeededDriversGetIndependentRoleSessions(t *testing.T) {
-	repository := newHTTPAuthRepository(t)
-	router, _ := newAuthTestRouter(auth.NewService(repository), false)
-	var sessionCookies []string
-	for _, email := range []string{"driver.one@example.test", "driver.two@example.test"} {
-		loginResponse := performLogin(t, router, email, "correct horse battery staple")
-		if loginResponse.Code != http.StatusOK {
-			t.Fatalf("driver login for %s status = %d body=%s", email, loginResponse.Code, loginResponse.Body.String())
-		}
-		var body sessionResponse
-		if err := json.Unmarshal(loginResponse.Body.Bytes(), &body); err != nil {
-			t.Fatalf("decode %s session: %v", email, err)
-		}
-		if body.User.Email != email || body.User.Role != "driver" {
-			t.Fatalf("unexpected driver identity for %s: %+v", email, body.User)
-		}
-		cookies := loginResponse.Result().Cookies()
-		if len(cookies) != 1 {
-			t.Fatalf("driver %s did not receive one session cookie", email)
-		}
-		sessionCookies = append(sessionCookies, cookies[0].Value)
-		request := httptest.NewRequest(http.MethodGet, "/driver-only", nil)
-		request.AddCookie(cookies[0])
-		response := httptest.NewRecorder()
-		router.ServeHTTP(response, request)
-		if response.Code != http.StatusNoContent {
-			t.Fatalf("driver %s role route status = %d, want 204", email, response.Code)
-		}
-	}
-	if sessionCookies[0] == sessionCookies[1] {
-		t.Fatal("two driver accounts unexpectedly received the same session token")
-	}
-}
-
-func TestLoginValidationAndStorageFailure(t *testing.T) {
-	repository := newHTTPAuthRepository(t)
-	router, _ := newAuthTestRouter(auth.NewService(repository), true)
-
-	invalidJSON := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader("{"))
-	invalidJSON.Header.Set("Content-Type", "application/json")
-	invalidJSON.Header.Set("Origin", testAppOrigin)
-	invalidJSONResponse := httptest.NewRecorder()
-	router.ServeHTTP(invalidJSONResponse, invalidJSON)
-	if invalidJSONResponse.Code != http.StatusBadRequest {
-		t.Fatalf("malformed JSON status = %d, want 400", invalidJSONResponse.Code)
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	request.Header.Set("Authorization", "Bearer unlinked-access")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "profile_not_found") {
+		t.Fatalf("unlinked Supabase user status=%d body=%s", response.Code, response.Body.String())
 	}
 
-	invalidEmail := performLogin(t, router, "not-an-email", "valid-length-password")
-	if invalidEmail.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("invalid email status = %d, want 422", invalidEmail.Code)
-	}
-
-	longPassword := strings.Repeat("x", 9<<10)
-	tooLarge := performLogin(t, router, "rider@example.test", longPassword)
-	if tooLarge.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("oversized login body status = %d, want 413", tooLarge.Code)
-	}
-
-	secureCookie := performLogin(t, router, "rider@example.test", "correct horse battery staple")
-	if secureCookie.Code != http.StatusOK || len(secureCookie.Result().Cookies()) != 1 || !secureCookie.Result().Cookies()[0].Secure {
-		t.Fatalf("configured secure cookie was not set: status=%d cookies=%+v", secureCookie.Code, secureCookie.Result().Cookies())
-	}
-
-	failedRepository := newHTTPAuthRepository(t)
-	failedRepository.failure = errors.New("database connection detail")
-	failedRouter, _ := newAuthTestRouter(auth.NewService(failedRepository), false)
-	databaseFailure := performLogin(t, failedRouter, "rider@example.test", "correct horse battery staple")
-	if databaseFailure.Code != http.StatusServiceUnavailable || strings.Contains(databaseFailure.Body.String(), "database connection detail") {
-		t.Fatalf("storage failure was not sanitized: status=%d body=%s", databaseFailure.Code, databaseFailure.Body.String())
-	}
-}
-
-func TestUnconfiguredDatabaseReturnsUnavailableInsteadOfPanicking(t *testing.T) {
-	service := auth.NewService(auth.NewPostgresRepository(nil))
-	router, _ := newAuthTestRouter(service, false)
-	response := performLogin(t, router, "rider@example.test", "correct horse battery staple")
+	repository.unavailable = true
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/auth/me", nil)
+	request.Header.Set("Authorization", "Bearer rider@example.test")
+	response = httptest.NewRecorder()
+	router.ServeHTTP(response, request)
 	if response.Code != http.StatusServiceUnavailable {
-		t.Fatalf("unconfigured database status = %d, want 503; body=%s", response.Code, response.Body.String())
+		t.Fatalf("repository failure status = %d, want 503: %s", response.Code, response.Body.String())
 	}
 }
 
-func TestRoleMiddlewareReturns401Then403(t *testing.T) {
-	repository := newHTTPAuthRepository(t)
-	service := auth.NewService(repository)
-	router, _ := newAuthTestRouter(service, false)
-
-	unauthenticatedRequest := httptest.NewRequest(http.MethodGet, "/driver-only", nil)
-	unauthenticatedResponse := httptest.NewRecorder()
-	router.ServeHTTP(unauthenticatedResponse, unauthenticatedRequest)
-	if unauthenticatedResponse.Code != http.StatusUnauthorized {
-		t.Fatalf("missing session status = %d, want 401", unauthenticatedResponse.Code)
-	}
-
-	loginResponse := performLogin(t, router, "rider@example.test", "correct horse battery staple")
-	cookie := loginResponse.Result().Cookies()[0]
-	request := httptest.NewRequest(http.MethodGet, "/driver-only", nil)
-	request.AddCookie(cookie)
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("rider on driver route status = %d, want 403", response.Code)
+func TestAuthLoginAndLogoutRoutesAreNotOwnedByGo(t *testing.T) {
+	router, _ := newAuthTestRouter(newHTTPAuthService(newHTTPAuthRepository(t)))
+	for _, path := range []string{"/api/v1/auth/login", "/api/v1/auth/logout"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`)))
+		if response.Code != http.StatusNotFound {
+			t.Errorf("POST %s status = %d, want 404", path, response.Code)
+		}
 	}
 }
 
-func performLogin(t *testing.T, router http.Handler, email, password string) *httptest.ResponseRecorder {
-	t.Helper()
-	body, err := json.Marshal(loginRequest{Email: email, Password: password})
-	if err != nil {
-		t.Fatalf("encode login payload: %v", err)
+func TestOriginCheckRemainsOnAuthenticatedWrites(t *testing.T) {
+	handled := false
+	handlers := newAuthHandlers(newHTTPAuthService(newHTTPAuthRepository(t)), testAppOrigin)
+	next := handlers.requireOrigin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		handled = true
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	badOrigin := httptest.NewRequest(http.MethodPost, "/api/v1/rides", nil)
+	badOrigin.Header.Set("Origin", "https://attacker.example")
+	badResponse := httptest.NewRecorder()
+	next.ServeHTTP(badResponse, badOrigin)
+	if badResponse.Code != http.StatusForbidden || handled {
+		t.Fatalf("untrusted origin status=%d, next handler called=%v", badResponse.Code, handled)
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", bytes.NewReader(body))
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Origin", testAppOrigin)
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	return response
+
+	goodOrigin := httptest.NewRequest(http.MethodPost, "/api/v1/rides", nil)
+	goodOrigin.Header.Set("Origin", testAppOrigin)
+	goodResponse := httptest.NewRecorder()
+	next.ServeHTTP(goodResponse, goodOrigin)
+	if goodResponse.Code != http.StatusNoContent || !handled {
+		t.Fatalf("trusted origin status=%d, next handler called=%v", goodResponse.Code, handled)
+	}
 }
 
-func performLogout(router http.Handler, cookie *http.Cookie, origin, csrfToken string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)
-	request.AddCookie(cookie)
-	request.Header.Set("Origin", origin)
-	if csrfToken != "" {
-		request.Header.Set("X-CSRF-Token", csrfToken)
-	}
-	response := httptest.NewRecorder()
-	router.ServeHTTP(response, request)
-	return response
-}
-
-func newAuthTestRouter(service *auth.Service, cookieSecure bool) (http.Handler, *authHandlers) {
+func newAuthTestRouter(service *auth.Service) (http.Handler, *authHandlers) {
 	router := chi.NewRouter()
 	router.Use(RequestID)
-	handlers := newAuthHandlers(service, testAppOrigin, cookieSecure)
+	handlers := newAuthHandlers(service, testAppOrigin)
 	handlers.registerRoutes(router)
-	router.With(handlers.requireAuth, handlers.requireRole("driver")).Get("/driver-only", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
 	return router, handlers
 }
 
+func newHTTPAuthService(repository *httpAuthRepository) *auth.Service {
+	return auth.NewService(repository, httpTokenVerifier{repository: repository})
+}
+
 type httpAuthRepository struct {
-	users    map[string]auth.Credentials
-	sessions map[string]auth.StoredSession
-	expires  map[string]time.Time
-	revoked  map[string]bool
-	failure  error
+	users         map[string]auth.Identity
+	supabaseIDs   map[string]string
+	tokenSubjects map[string]string
+	unavailable   bool
 }
 
 func newHTTPAuthRepository(t *testing.T) *httpAuthRepository {
 	t.Helper()
-	users := map[string]auth.Credentials{}
-	for index, account := range []struct {
-		id, email, name, role string
-	}{
-		{"20000000-0000-4000-8000-000000000001", "rider@example.test", "Demo Rider", "rider"},
-		{"20000000-0000-4000-8000-000000000002", "driver.one@example.test", "Demo Driver One", "driver"},
-		{"20000000-0000-4000-8000-000000000003", "driver.two@example.test", "Demo Driver Two", "driver"},
-	} {
-		hash, err := bcrypt.GenerateFromPassword([]byte("correct horse battery staple"), bcrypt.DefaultCost)
-		if err != nil {
-			t.Fatalf("hash HTTP test account %d password: %v", index, err)
-		}
-		users[account.email] = auth.Credentials{ID: account.id, Email: account.email, DisplayName: account.name, Role: account.role, PasswordHash: string(hash)}
+	repository := &httpAuthRepository{
+		users: map[string]auth.Identity{
+			"rider@example.test":      {ID: "20000000-0000-4000-8000-000000000001", Email: "rider@example.test", DisplayName: "Demo Rider", Role: "rider"},
+			"driver.one@example.test": {ID: "20000000-0000-4000-8000-000000000002", Email: "driver.one@example.test", DisplayName: "Demo Driver One", Role: "driver"},
+			"driver.two@example.test": {ID: "20000000-0000-4000-8000-000000000003", Email: "driver.two@example.test", DisplayName: "Demo Driver Two", Role: "driver"},
+		},
+		supabaseIDs: map[string]string{
+			"rider@example.test":      "30000000-0000-4000-8000-000000000001",
+			"driver.one@example.test": "30000000-0000-4000-8000-000000000002",
+			"driver.two@example.test": "30000000-0000-4000-8000-000000000003",
+		},
+		tokenSubjects: make(map[string]string),
 	}
-	return &httpAuthRepository{
-		users:    users,
-		sessions: make(map[string]auth.StoredSession),
-		expires:  make(map[string]time.Time),
-		revoked:  make(map[string]bool),
+	for email, subject := range repository.supabaseIDs {
+		repository.tokenSubjects[email] = subject
 	}
+	return repository
 }
 
-func (r *httpAuthRepository) FindUserByEmail(_ context.Context, email string) (auth.Credentials, error) {
-	if r.failure != nil {
-		return auth.Credentials{}, r.failure
+func (r *httpAuthRepository) FindIdentityBySupabaseID(_ context.Context, supabaseID string) (auth.Identity, error) {
+	if r.unavailable {
+		return auth.Identity{}, errors.New("test repository is unavailable")
 	}
-	user, ok := r.users[email]
-	if !ok {
-		return auth.Credentials{}, auth.ErrUserNotFound
-	}
-	return user, nil
-}
-
-func (r *httpAuthRepository) CreateSession(_ context.Context, userID string, tokenHash, csrfTokenHash []byte, expiresAt time.Time) error {
-	if r.failure != nil {
-		return r.failure
-	}
-	var user auth.Credentials
-	for _, candidate := range r.users {
-		if candidate.ID == userID {
-			user = candidate
-			break
+	for email, id := range r.supabaseIDs {
+		if id == supabaseID {
+			return r.users[email], nil
 		}
 	}
-	if user.ID == "" {
-		return auth.ErrUserNotFound
-	}
-	key := hex.EncodeToString(tokenHash)
-	r.sessions[key] = auth.StoredSession{
-		Identity:      auth.Identity{ID: user.ID, Email: user.Email, DisplayName: user.DisplayName, Role: user.Role},
-		CSRFTokenHash: append([]byte(nil), csrfTokenHash...),
-	}
-	r.expires[key] = expiresAt
-	return nil
+	return auth.Identity{}, auth.ErrIdentityNotFound
 }
 
-func (r *httpAuthRepository) FindActiveSession(_ context.Context, tokenHash []byte) (auth.StoredSession, error) {
-	if r.failure != nil {
-		return auth.StoredSession{}, r.failure
-	}
-	key := hex.EncodeToString(tokenHash)
-	if r.revoked[key] || !time.Now().Before(r.expires[key]) {
-		return auth.StoredSession{}, auth.ErrSessionNotFound
-	}
-	session, ok := r.sessions[key]
-	if !ok {
-		return auth.StoredSession{}, auth.ErrSessionNotFound
-	}
-	return session, nil
-}
+type httpTokenVerifier struct{ repository *httpAuthRepository }
 
-func (r *httpAuthRepository) RevokeSession(_ context.Context, tokenHash []byte) error {
-	if r.failure != nil {
-		return r.failure
+func (v httpTokenVerifier) Verify(_ context.Context, token string) (string, error) {
+	if subject, ok := v.repository.tokenSubjects[token]; ok {
+		return subject, nil
 	}
-	r.revoked[hex.EncodeToString(tokenHash)] = true
-	return nil
+	return "", auth.ErrInvalidAccessToken
 }

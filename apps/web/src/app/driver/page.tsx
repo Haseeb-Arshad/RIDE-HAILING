@@ -27,11 +27,10 @@ function DriverWorkspace() {
   const refreshRef = useRef<(forceAfterCurrent?: boolean) => Promise<void>>(async () => {});
   const dataVersion = useRef(0);
   const session = state.status === "signed_in" ? state.session : null;
-  const csrfToken = session?.csrf_token;
   const userID = session?.user.id;
 
   const refresh = useCallback(async (forceAfterCurrent = false) => {
-    if (!csrfToken || !userID) return;
+    if (!userID) return;
     if (refreshInFlight.current) {
       if (forceAfterCurrent) refreshAgain.current = true;
       return;
@@ -68,7 +67,7 @@ function DriverWorkspace() {
         window.setTimeout(() => void refreshRef.current(true), 0);
       }
     }
-  }, [csrfToken, userID]);
+  }, [userID]);
 
   useEffect(() => { refreshRef.current = refresh; }, [refresh]);
 
@@ -96,7 +95,7 @@ function DriverWorkspace() {
     setNotice(null);
     dataVersion.current += 1;
     try {
-      const result = await api.setDriverAvailability(next, session.csrf_token);
+      const result = await api.setDriverAvailability(next);
       setAvailability(result.status);
       setNotice(result.status === "available" ? "You’re available for eligible requests." : "You’re now offline.");
       await refresh(true);
@@ -115,7 +114,7 @@ function DriverWorkspace() {
     setNotice(null);
     dataVersion.current += 1;
     try {
-      const accepted = await api.acceptRide(rideID, session.csrf_token);
+      const accepted = await api.acceptRide(rideID);
       setAssignment(accepted);
       setAvailability("busy");
       setNotice("Ride assigned. Your active trip is shown below.");
@@ -139,7 +138,7 @@ function DriverWorkspace() {
     setNotice(null);
     dataVersion.current += 1;
     try {
-      const completed = await api.completeRide(assignment.id, session.csrf_token);
+      const completed = await api.completeRide(assignment.id);
       setAssignment(null);
       setRequests([]);
       setNotice(`Trip ${shortRideId(completed.id)} completed. Checking your refreshed availability…`);

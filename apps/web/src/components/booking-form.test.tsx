@@ -36,7 +36,7 @@ function chooseRoute() {
 }
 
 function renderForm(onRideCreated = vi.fn()) {
-  render(<BookingForm locations={[pickup, destination]} ownerID="20000000-0000-4000-8000-000000000001" csrfToken="test-csrf" onRideCreated={onRideCreated} />);
+  render(<BookingForm locations={[pickup, destination]} ownerID="20000000-0000-4000-8000-000000000001" onRideCreated={onRideCreated} />);
   return onRideCreated;
 }
 
@@ -115,7 +115,7 @@ describe("booking form", () => {
     const retryCreateHeaders = new Headers(fetchMock.mock.calls[3][1]?.headers);
     expect(firstCreateHeaders.get("Idempotency-Key")).toBe("booking_00000000-0000-4000-8000-000000000001");
     expect(retryCreateHeaders.get("Idempotency-Key")).toBe(firstCreateHeaders.get("Idempotency-Key"));
-    expect(firstCreateHeaders.get("X-CSRF-Token")).toBe("test-csrf");
+    expect(fetchMock.mock.calls[1][1]?.credentials).toBe("omit");
   });
 
   it("reconciles an active-ride conflict by opening the server's current ride", async () => {

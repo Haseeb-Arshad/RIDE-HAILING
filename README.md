@@ -1,67 +1,80 @@
 # Lahore Ride Hailing
 
-A single-repository ride-booking demo for Lahore. The Next.js and TypeScript app serves riders and drivers, the Go and Chi API owns ride behavior, and PostgreSQL is the intended source of truth.
+A focused ride-booking demo for Lahore. The Next.js app presents rider and driver journeys, the Go API owns business behavior, Supabase Auth manages sign-in, and Supabase PostgreSQL stores profiles and ride state.
 
 ## Project status
 
-The rider and driver screens now use the Go API for login, fare estimates, booking, availability, assignments, and ride status. Stage 7 adds polling, cancellation, request conflict handling, and same-key booking retries. The versioned Supabase migration and seed are ready, but have not been applied because the Supabase connection string has not been provided. Database-backed flows and the full rider-to-driver demo therefore remain unverified.
+The repository includes rider and driver flows, Supabase Auth integration, profile-based role checks, PostgreSQL race tests, frontend tests, and a real two-browser Playwright journey. Local unit and UI checks can run without a database. The Supabase migration, seed, database race tests, and browser journey still require the project connection and demo-account settings in ignored environment files; they are not verified until those commands complete successfully.
 
-## Project guide
+The execution plan references a separate five-page assessment source that was not included with the pasted plan. Criteria present only in that missing source remain unverified.
 
-- [Requirements and acceptance map](docs/REQUIREMENTS.md)
-- [API and domain contract](docs/CONTRACT.md)
-- [Architecture and state diagrams](docs/ARCHITECTURE.md)
-- [Architecture decisions](docs/DECISIONS.md)
-- [OpenAPI draft](docs/openapi.yaml)
+## Architecture
 
-The contract describes a deliberately bounded demo: seeded Lahore locations and accounts, approximate fare and pickup estimates, cookie sessions, and transactional ride assignment. It does not claim real routing, live driver tracking, payments, or production dispatch.
+- `apps/web`: Next.js and TypeScript, with `@supabase/ssr` browser/server helpers and `src/proxy.ts` session refresh.
+- `apps/api`: Go and Chi own quotes, matching, authorization, ride creation, assignment, cancellation, and completion.
+- PostgreSQL: durable ride state, profile role mapping, idempotency, and concurrency constraints.
+- Supabase Auth: email/password sign-in and token refresh. The Go API validates ES256 or RS256 access-token signatures through the project's public JWKS, then resolves the user's role and display name from `ride_hailing.users`. It does not trust token user metadata for authorization.
+
+The browser calls the Go API through a same-origin Next.js rewrite. Only the publishable Supabase key belongs in the web environment. The API does not need a Supabase secret API key. Application tables stay in the private `ride_hailing` schema, outside the Supabase Data API, with RLS enabled and forced as defense in depth.
+
+This project runs the Next.js and Go services as separate host processes. It does not start Docker or a local PostgreSQL service.
+
+## Configure Supabase
+
+Prerequisites: Go 1.26 or newer, Node.js 20.9 or newer, and npm. The Go module selects toolchain 1.27.3; local frontend checks used Node 22.
+
+1. Copy `.env.example` to the ignored repository-root `.env`. Set `DATABASE_URL` to the project's PostgreSQL connection string and `SUPABASE_URL` to its HTTPS project URL. Keep both server-side.
+2. In Supabase Auth, create and confirm three email/password accounts matching the demo emails in `.env.example`: `rider@example.test`, `driver.one@example.test`, and `driver.two@example.test`. Choose their passwords in Supabase Auth. For the browser test, put the rider and driver test credentials in the corresponding `E2E_*` variables in `.env`.
+3. Configure the Supabase project to sign access tokens with an asymmetric ES256 or RS256 signing key. The Go API verifies against the project's public JWKS and intentionally does not accept the legacy shared-secret HS256 algorithm.
+4. Copy `apps/web/.env.local.example` to `apps/web/.env.local`; set `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` from the project's API settings. The publishable key is intended for browser use. Do not put a secret API key there.
+5. Confirm `ride_hailing` is not listed among the project's exposed Data API schemas. Then apply the migration:
+
+   ```powershell
+   .\scripts\supabase-db-push.ps1
+   ```
+
+   Set `DEMO_SEED_ENABLED=true` in `.env`, then from `apps/api` run:
+
+   ```powershell
+   go run ./cmd/seed
+   ```
+
+The seed links existing Supabase Auth users to application profiles by email and inserts seven fixed Lahore locations. It never creates or resets Supabase passwords. The seed is transactional and safe to repeat; it does not reset a driver's saved availability. A missing Auth account stops the seed with a setup message.
+
+For a persistent API, use the direct database connection when IPv6 is available or Supavisor session mode on IPv4-only networks. Transaction-mode pooling is intended for transient clients and does not support prepared statements. See the [Supabase PostgreSQL connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres). Never commit `.env` or expose the connection string through a `NEXT_PUBLIC_` variable.
 
 ## Run the services separately
 
-Prerequisites: Go 1.26 or newer, Node.js 24 LTS or newer active LTS, and npm. The Go module selects toolchain 1.27.3. The API and web app run as separate local processes. This project does not start or connect to a local PostgreSQL service or container. With no database URL, liveness stays available while `/readyz` and database-backed API routes return `503`.
-
-1. Copy `.env.example` to `.env` at the repository root. Leave `DATABASE_URL` blank for the current scaffold.
-2. In a terminal, run the Go API:
-
-   ```powershell
-   Set-Location apps/api
-   go run ./cmd/api
-   ```
-
-3. In a second terminal, configure and run the web app:
-
-   ```powershell
-   Set-Location apps/web
-   Copy-Item .env.local.example .env.local
-   npm ci
-   npm run dev
-   ```
-
-4. Open <http://127.0.0.1:3000> and sign in at <http://127.0.0.1:3000/login>. Seeded accounts are `rider@example.test`, `driver.one@example.test`, and `driver.two@example.test`; use the password configured with `DEMO_ACCOUNT_PASSWORD` when the database was seeded.
-
-Both processes bind to loopback only. The API listens at <http://127.0.0.1:8080>. Check liveness at `/healthz`, database readiness at `/readyz`, and the Next.js same-origin proxy at <http://127.0.0.1:3000/api/v1/healthz>. The proxy destination comes from the server-only `API_ORIGIN` setting; do not prefix it with `NEXT_PUBLIC_`.
-
-## Database
-
-The application uses PostgreSQL through Go's `pgx` driver. The migration is in `supabase/migrations/`; it creates the private `ride_hailing` schema, database constraints, and indexes. The checked-in Supabase config omits `ride_hailing` from the Data API schema list, and the migration revokes schema/table grants and enables and forces RLS with no client policies. Confirm the remote project's exposed-schema settings also omit `ride_hailing` before applying the migration. Go uses qualified table names and the server-side connection.
-
-Once a Supabase connection string is available:
-
-1. Put it in `DATABASE_URL` in the ignored root `.env` file.
-2. Run `.\scripts\supabase-db-push.ps1` from the repository root. It uses the pinned Supabase CLI and reads the connection from `.env` without writing it into a tracked file.
-3. Set `DEMO_SEED_ENABLED=true` and a private `DEMO_ACCOUNT_PASSWORD` of 12–72 bytes in that same ignored `.env` file.
-4. From `apps/api`, run `go run ./cmd/seed`. The command wraps all fixtures in a transaction and is safe to rerun; it does not reset active driver availability.
-
-The seed creates `rider@example.test`, `driver.one@example.test`, and `driver.two@example.test`; all use the password configured locally. It also inserts seven approximate Lahore locations. Do not enable demo seeding against a shared database until you have chosen an appropriate demo password. The database stages remain unverified until the migration, seed, and integration checks have run against the supplied Supabase database. No local PostgreSQL process or Docker container is started by this project.
-
-For a persistent API, use the direct connection when IPv6 is available or Supavisor session mode on IPv4-only networks. Transaction mode is intended for transient/serverless clients and does not support prepared statements ([Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres)). Never commit `.env` or expose the connection string in frontend variables. No Supabase Auth or browser-side database client is planned; Go remains the only business API.
-
-## Current checks
+Run the Go API in one terminal:
 
 ```powershell
 Set-Location apps/api
-go build ./...
-go test ./...
+go run ./cmd/api
+```
+
+Run Next.js in a second terminal:
+
+```powershell
+Set-Location apps/web
+npm ci
+npm run dev
+```
+
+Open <http://127.0.0.1:3000>. The API listens on <http://127.0.0.1:8080>; liveness is `/healthz` and PostgreSQL readiness is `/readyz`. The Next.js rewrite uses the server-only `API_ORIGIN` setting. With no database connection, liveness remains available while readiness and database-backed API routes return `503`.
+
+## Checks
+
+Run local backend and frontend checks:
+
+```powershell
+Set-Location apps/api
+go test ./... -count=1
+go vet ./...
+$env:GOARCH = "amd64"
+$env:CGO_ENABLED = "1"
+go test -race ./... -count=1
+Remove-Item Env:GOARCH
+Remove-Item Env:CGO_ENABLED
 
 Set-Location ../web
 npm test
@@ -70,6 +83,38 @@ npx tsc --noEmit
 npm run build
 ```
 
-`go test ./...` runs the local auth, pricing, ride-service, and HTTP tests. PostgreSQL schema, session, ride, and lifecycle integration checks are skipped unless `TEST_DATABASE_URL` is set. After the Supabase migration and seed have been applied, run `.\scripts\test-supabase-integration.ps1`. Most database checks use rollback-only transactions; cross-connection race tests create unique temporary actors and remove their test rows during cleanup. The integration check requires a privileged PostgreSQL connection because RLS is forced on the application tables.
+The Windows race run requires a GCC toolchain that targets amd64.
 
-Frontend checks run with `npm test` and cover route validation, quote loading and errors, lost-response reconciliation, stable idempotency keys, and ride status rendering. They use API mocks and do not prove database persistence. Real PostgreSQL booking and assignment behavior remains unverified until the supplied database is configured; the separate-browser journey is not yet verified.
+PostgreSQL integration tests use the configured Supabase database and are run with:
+
+```powershell
+Set-Location ..
+.\scripts\test-supabase-integration.ps1
+```
+
+The live browser journey starts Next.js and Go as separate services on dedicated local ports and uses separate rider and driver browser contexts:
+
+```powershell
+Set-Location apps/web
+npm run test:e2e
+```
+
+The browser journey requires a migrated and seeded database, the public Supabase web settings, and the `E2E_RIDER_*` and `E2E_DRIVER_*` credentials in the ignored root `.env`. Use demo accounts without an active ride before running it. Component tests use API mocks and demonstrate UI behavior only; they do not prove PostgreSQL persistence.
+
+The GitHub Actions workflow runs Go format, unit/HTTP tests and vet, plus frontend tests, lint, type checking, and production build. It does not connect to PostgreSQL, so database integration tests skip there unless a separate database test job is configured.
+
+## Boundaries
+
+Fares and distances use fixed Lahore demo locations and illustrative calculations. Driver coordinates are static. The app does not include live GPS, road routing, payments, notifications, reassignment, production dispatch, or a hosted deployment. Active ride and driver pages poll; the app does not use WebSockets, Redis, or Kafka.
+
+AI tools were used for implementation and documentation support. The repository owner remains responsible for review, credentials, and verification.
+
+## Project documents
+
+- [Requirements and acceptance map](docs/REQUIREMENTS.md)
+- [API and domain contract](docs/CONTRACT.md)
+- [Architecture and state diagrams](docs/ARCHITECTURE.md)
+- [Architecture decisions](docs/DECISIONS.md)
+- [Current limitations and unverified checks](docs/LIMITATIONS.md)
+- [OpenAPI contract](docs/openapi.yaml)
+- [Continuous integration checks](.github/workflows/ci.yml)

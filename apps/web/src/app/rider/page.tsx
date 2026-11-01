@@ -66,7 +66,6 @@ function RiderWorkspace() {
           <BookingForm
             locations={locations}
             ownerID={session?.user.id ?? ""}
-            csrfToken={session?.csrf_token ?? ""}
             onRideCreated={(ride) => router.push(`/rides/${encodeURIComponent(ride.id)}`)}
           />
         )}

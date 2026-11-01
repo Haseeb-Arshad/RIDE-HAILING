@@ -1,6 +1,6 @@
 # API and domain contract
 
-**Status:** Implementation source of truth. Stages 3–7 are implemented locally, including the rider/driver UI and persisted driver availability reads. The migration, seed, and all database-backed checks await the supplied Supabase connection. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
+**Status:** Implementation source of truth. The local code includes ride lifecycle behavior, rider/driver UI, Supabase Auth integration, and local test coverage. Migration, seed, PostgreSQL race tests, and real browser journey require the configured Supabase project and demo accounts. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
 
 ## 1. Domain vocabulary
 
@@ -24,13 +24,15 @@
 
 No other transition is valid. `busy` is system-managed and cannot be selected by a driver. A driver can request `offline` or `available` only when no active assignment exists.
 
-## 2. Authorization and sessions
+## 2. Authorization and Supabase Auth
 
-The API derives actor ID and role solely from a server-validated session. It ignores client-supplied `rider_id`, `driver_id`, role, ride status, fare, ETA, or assignment fields. SQL queries are parameterized.
+Supabase Auth owns email/password credentials, refresh sessions, and browser sign-in. The Next.js browser/server helpers use `@supabase/ssr`; `src/proxy.ts` calls `getClaims()` to refresh the cookie-backed session. The browser sends the current access token explicitly as `Authorization: Bearer ...` to the same-origin Go API. API fetches omit Supabase cookies, so the API does not authenticate from ambient cookies.
 
-Login uses seeded demo users with bcrypt password hashes. The server creates a cryptographically random 32-byte opaque session token, stores only its SHA-256 hash, and returns it in an `HttpOnly` cookie. Cookie settings: `Path=/`, `SameSite=Lax`, seven-day bounded expiry, and `Secure` when `SESSION_COOKIE_SECURE=true`. The session token is never exposed to JavaScript or logs. Logout revokes the session. `/auth/me` returns the identity and a session-bound CSRF token for browser requests; only the CSRF token hash is stored.
+Go accepts ES256 or RS256 access tokens and validates signature using the configured project's public JWKS, exact issuer, `authenticated` audience, expiry, and UUID subject. It resolves `sub` through `ride_hailing.users.supabase_auth_id`. The profile table supplies the app user ID, email, display name, and role. Go never authorizes from `user_metadata`, `app_metadata`, email alone, or client-supplied identity. The project's Auth signing key must be asymmetric; no Supabase secret API key or signing secret is required by this service.
 
-All unsafe requests require an `Origin` matching the configured application origin. Authenticated browser writes also require `X-CSRF-Token` matching the session-bound CSRF token hash. Login has no authenticated CSRF token yet, but still requires the allowed `Origin`. The browser calls same-origin `/api/v1/...`; Next.js rewrites requests server-side to Go. The API origin and database URL are server-only settings and must never be exposed in a `NEXT_PUBLIC_` variable.
+The seed links three already-created Supabase Auth accounts to rider/driver profiles by normalized email. It does not create Auth users or set their passwords. Go exposes only `GET /api/v1/auth/me`; Supabase Auth handles sign-in and sign-out in the browser.
+
+All unsafe API requests require an `Origin` matching the configured application origin. Writes do not require a CSRF token because authentication uses an explicit bearer header that browsers do not attach automatically. The browser calls same-origin `/api/v1/...`; Next.js rewrites requests server-side to Go. The API origin, database URL, and demo passwords remain server-side; only the Supabase publishable key may use a `NEXT_PUBLIC_` variable.
 
 Authorization rules:
 
@@ -49,7 +51,7 @@ Authorization rules:
 4. A driver is `busy` exactly while holding an active assignment. Acceptance and terminal release update ride, assignment, and driver rows in one PostgreSQL transaction.
 5. Ride and driver state are rechecked after acquiring locks. Acceptance locks the ride row first and then the driver row, in a consistent order, and commits assignment plus both status changes together.
 6. PostgreSQL constraints backstop one-open-ride, one-assignment-per-ride, one-active-assignment-per-driver, and idempotency-key uniqueness. A process mutex is not a concurrency guarantee.
-7. Application tables live in the private `ride_hailing` schema, omitted from this repository's Supabase Data API schema list. The remote project must keep it omitted too. RLS is enabled and forced on every table with no browser-facing policies or grants. Go uses server-side qualified SQL and enforces the application session/ownership model.
+7. Application tables live in the private `ride_hailing` schema, omitted from this repository's Supabase Data API schema list. The remote project must keep it omitted too. RLS is enabled and forced on every table with no browser-facing policies or grants. Go uses server-side qualified SQL, maps verified Supabase subjects to application profiles, and enforces role/ownership rules.
 8. Quote inputs contain only pickup ID, destination ID, and category. Creation recomputes distance/fare on the server and persists the quote snapshot. The client cannot select a driver or submit a trusted price.
 9. Every create request has a rider-scoped `Idempotency-Key` (1–128 visible ASCII characters) and canonical request fingerprint over the normalized pickup UUID, destination UUID, and category. Same rider/key and same fingerprint returns the same ride; the response is HTTP 200 and reflects that ride’s current persisted state. Same key with a different fingerprint is 409. A new key while the rider already has an open ride is 409.
 
@@ -71,10 +73,10 @@ An eligible driver is in Lahore, `available`, category-compatible, and within th
 ## 5. HTTP conventions
 
 - JSON request and response bodies use UTF-8 and `application/json` unless the response is `204`.
-- Responses include `X-Request-ID`; the same ID appears in an error envelope. Logs are structured and omit passwords, cookies, session tokens, and CSRF values.
+- Responses include `X-Request-ID`; the same ID appears in an error envelope. Logs are structured and omit passwords, bearer tokens, refresh tokens, API keys, and database URLs.
 - Error shape: `{ "error": { "code": "...", "message": "...", "request_id": "..." } }`.
-- `400`: malformed JSON or malformed request syntax. `401`: no valid session or invalid credentials. `403`: wrong role, Origin, or CSRF. `404`: unknown ID or concealed non-owned resource. `409`: state, eligibility, uniqueness, or idempotency conflict. `413`: body too large. `422`: valid JSON with invalid semantic fields. `500`: unexpected error with a generic message. `503`: readiness or authentication storage unavailable.
-- Use `401` for unauthenticated, `403` for insufficient rights/CSRF, `404` for concealed non-owned resources, `409` for state conflicts, and `422` for valid-JSON field validation.
+- `400`: malformed JSON or malformed request syntax. `401`: missing, invalid, or expired Supabase access token. `403`: profile not enabled, wrong role, or Origin. `404`: unknown ID or concealed non-owned resource. `409`: state, eligibility, uniqueness, or idempotency conflict. `413`: body too large. `422`: valid JSON with invalid semantic fields. `500`: unexpected error with a generic message. `503`: readiness, JWKS, or authentication storage unavailable.
+- Use `401` for unauthenticated requests, `403` for insufficient rights or an unlinked profile, `404` for concealed non-owned resources, `409` for state conflicts, and `422` for valid-JSON field validation.
 - Repeated accept by the already assigned driver returns `200` with the current ride. Repeated cancel by the owning rider after cancellation and repeated complete by the assigned driver after completion return `200` with the current ride. Other invalid transitions return `409`.
 
 ## 6. Canonical routes
@@ -83,9 +85,7 @@ An eligible driver is in Lahore, `available`, category-compatible, and within th
 |---|---|---|---|
 | `GET /healthz` | Probe | None | `200` liveness |
 | `GET /readyz` | Probe | None | `200` if PostgreSQL is reachable; otherwise `503` |
-| `POST /api/v1/auth/login` | Guest | `{email,password}` plus allowed Origin | `200` user + CSRF token; sets session cookie |
-| `GET /api/v1/auth/me` | Authenticated | Session cookie | `200` current user + CSRF token |
-| `POST /api/v1/auth/logout` | Authenticated | Cookie + Origin + CSRF | `204`; revokes session and clears cookie |
+| `GET /api/v1/auth/me` | Authenticated | `Authorization: Bearer <Supabase access token>` | `200` current application user profile |
 | `GET /api/v1/locations` | Authenticated | None | `200` seeded Lahore locations |
 | `POST /api/v1/quotes` | Rider | `{pickup_location_id,destination_location_id,category}` | `200` server-generated estimate |
 | `POST /api/v1/rides` | Rider | Same quote request + `Idempotency-Key` | `201` new ride; `200` idempotent replay |
@@ -125,8 +125,9 @@ Quote response:
 
 `pickup_eta_minutes` is integer or `null`. A ride resource contains its UUID, owner identity restricted as above, pickup and destination snapshots, category, persisted fare/distance/currency snapshot, status, creation/update times, and assignment details only after acceptance. Driver request summaries omit rider identity/contact data. Unknown enum values and extra authority-bearing client fields are rejected or ignored; they never override server state.
 
-## 8. Remaining gates
+## 8. Remaining verification gates
 
-- Reconcile the original five-page assessment, especially any evaluation criteria not reproduced in the supplied execution plan.
-- Apply the migration, seed the demo accounts, and run the schema, session, ride, idempotency, assignment, release, and concurrency integration checks after the user supplies the Supabase connection string; until then, database-backed behavior is not verified.
-- Build the rider/driver web experience after the database gate is verified.
+- Reconcile the original five-page assessment; it was not included with the supplied execution plan, so criteria found only there are unknown.
+- Configure the Supabase connection and asymmetric Auth signing key, create the three email/password Auth users, apply migrations, and run the seed.
+- Run PostgreSQL schema, profile mapping, ride, idempotency, assignment, release, and concurrency checks against the configured Supabase project. Until then, database-backed behavior is unverified.
+- Run the two-browser Playwright journey against that same database and record its actual result.

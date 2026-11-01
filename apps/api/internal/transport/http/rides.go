@@ -14,6 +14,8 @@ import (
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/rides"
 )
 
+var errRequestBodyTooLarge = errors.New("request body too large")
+
 type rideHandlers struct {
 	service *rides.Service
 }
@@ -21,17 +23,17 @@ type rideHandlers struct {
 func registerRideRoutes(router chi.Router, authHandlers *authHandlers, service *rides.Service) {
 	handlers := &rideHandlers{service: service}
 	router.With(authHandlers.requireAuth).Get("/api/v1/locations", handlers.listLocations)
-	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireCSRF, authHandlers.requireRole("rider")).Post("/api/v1/quotes", handlers.quote)
-	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireCSRF, authHandlers.requireRole("rider")).Post("/api/v1/rides", handlers.createRide)
+	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireRole("rider")).Post("/api/v1/quotes", handlers.quote)
+	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireRole("rider")).Post("/api/v1/rides", handlers.createRide)
 	router.With(authHandlers.requireAuth, authHandlers.requireRole("rider")).Get("/api/v1/rides/current", handlers.currentRide)
 	router.With(authHandlers.requireAuth).Get("/api/v1/rides/{id}", handlers.getRide)
 	router.With(authHandlers.requireAuth, authHandlers.requireRole("driver")).Get("/api/v1/drivers/me/availability", handlers.getAvailability)
 	router.With(authHandlers.requireAuth, authHandlers.requireRole("driver")).Get("/api/v1/driver/requests", handlers.driverRequests)
 	router.With(authHandlers.requireAuth, authHandlers.requireRole("driver")).Get("/api/v1/driver/assignment", handlers.currentAssignment)
-	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireCSRF, authHandlers.requireRole("driver")).Patch("/api/v1/drivers/me/availability", handlers.setAvailability)
-	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireCSRF, authHandlers.requireRole("driver")).Post("/api/v1/rides/{id}/accept", handlers.acceptRide)
-	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireCSRF, authHandlers.requireRole("rider")).Post("/api/v1/rides/{id}/cancel", handlers.cancelRide)
-	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireCSRF, authHandlers.requireRole("driver")).Post("/api/v1/rides/{id}/complete", handlers.completeRide)
+	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireRole("driver")).Patch("/api/v1/drivers/me/availability", handlers.setAvailability)
+	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireRole("driver")).Post("/api/v1/rides/{id}/accept", handlers.acceptRide)
+	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireRole("rider")).Post("/api/v1/rides/{id}/cancel", handlers.cancelRide)
+	router.With(authHandlers.requireOrigin, authHandlers.requireAuth, authHandlers.requireRole("driver")).Post("/api/v1/rides/{id}/complete", handlers.completeRide)
 }
 
 func (h *rideHandlers) listLocations(w http.ResponseWriter, r *http.Request) {

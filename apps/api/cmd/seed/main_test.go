@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestPostgresSchemaConstraintsAndRepeatableSeed(t *testing.T) {
@@ -34,34 +33,42 @@ func TestPostgresSchemaConstraintsAndRepeatableSeed(t *testing.T) {
 	}
 	defer pool.Close()
 
+	var authAccountCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM auth.users
+		WHERE lower(email) IN ('rider@example.test', 'driver.one@example.test', 'driver.two@example.test')
+		  AND deleted_at IS NULL`).Scan(&authAccountCount); err != nil {
+		t.Fatalf("check Supabase Auth demo accounts: %v", err)
+	}
+	if authAccountCount != len(userFixtures) {
+		t.Skip("create the rider and two driver email/password accounts in Supabase Auth before running the seed integration check")
+	}
+
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		t.Fatalf("begin rollback-only integration transaction: %v", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte("integration-only-password"), bcrypt.DefaultCost)
-	if err != nil {
-		t.Fatalf("hash integration fixture password: %v", err)
-	}
-	if err := seedDemoData(ctx, tx, string(passwordHash)); err != nil {
+	if err := seedDemoData(ctx, tx); err != nil {
 		t.Fatalf("seed demo fixtures: %v", err)
 	}
 	assertSeedFixtures(t, ctx, tx, "available")
 	if _, err := tx.Exec(ctx, `
 		UPDATE ride_hailing.driver_profiles
 		SET status = 'offline'
-		WHERE user_id = '20000000-0000-4000-8000-000000000002'`); err != nil {
+		WHERE user_id = (SELECT id FROM ride_hailing.users WHERE email = 'driver.one@example.test')`); err != nil {
 		t.Fatalf("prepare driver availability preservation check: %v", err)
 	}
-	if err := seedDemoData(ctx, tx, string(passwordHash)); err != nil {
+	if err := seedDemoData(ctx, tx); err != nil {
 		t.Fatalf("repeat demo seed: %v", err)
 	}
 	assertSeedFixtures(t, ctx, tx, "offline")
 
 	for _, table := range []string{
 		"users", "locations", "driver_profiles", "driver_categories",
-		"rides", "ride_assignments", "idempotency_keys", "sessions",
+		"rides", "ride_assignments", "idempotency_keys",
 	} {
 		var enabled, forced bool
 		err := tx.QueryRow(ctx, `
@@ -169,10 +176,10 @@ func assertSeedFixtures(t *testing.T, ctx context.Context, tx pgx.Tx, expectedFi
 			(SELECT count(*) FROM ride_hailing.users WHERE email IN
 			 ('rider@example.test', 'driver.one@example.test', 'driver.two@example.test')),
 			(SELECT count(*) FROM ride_hailing.locations WHERE id::text LIKE '10000000-0000-4000-8000-00000000000%'),
-			(SELECT count(*) FROM ride_hailing.driver_profiles WHERE user_id IN
-			 ('20000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000003')),
-			(SELECT count(*) FROM ride_hailing.driver_categories WHERE driver_id IN
-			 ('20000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000003'))`).Scan(
+			(SELECT count(*) FROM ride_hailing.driver_profiles d JOIN ride_hailing.users u ON u.id = d.user_id WHERE u.email IN
+			 ('driver.one@example.test', 'driver.two@example.test')),
+			(SELECT count(*) FROM ride_hailing.driver_categories c JOIN ride_hailing.users u ON u.id = c.driver_id WHERE u.email IN
+			 ('driver.one@example.test', 'driver.two@example.test'))`).Scan(
 		&userCount, &locationCount, &driverCount, &categoryCount)
 	if err != nil {
 		t.Fatalf("count seeded fixtures: %v", err)
@@ -180,27 +187,26 @@ func assertSeedFixtures(t *testing.T, ctx context.Context, tx pgx.Tx, expectedFi
 	if userCount != 3 || locationCount != 7 || driverCount != 2 || categoryCount != 4 {
 		t.Fatalf("unexpected seed counts: users=%d locations=%d drivers=%d categories=%d", userCount, locationCount, driverCount, categoryCount)
 	}
-	var status, secondDriverStatus, hashPrefix string
+	var status, secondDriverStatus string
 	if err := tx.QueryRow(ctx, `
-		SELECT d1.status::text, d2.status::text, left(u.password_hash, 4)
+		SELECT d1.status::text, d2.status::text
 		FROM ride_hailing.driver_profiles d1
-		JOIN ride_hailing.users u ON u.id = d1.user_id
-		JOIN ride_hailing.driver_profiles d2 ON d2.user_id = '20000000-0000-4000-8000-000000000003'
-		WHERE u.email = 'driver.one@example.test'`).Scan(&status, &secondDriverStatus, &hashPrefix); err != nil {
+		JOIN ride_hailing.users u1 ON u1.id = d1.user_id
+		JOIN ride_hailing.users u2 ON u2.email = 'driver.two@example.test'
+		JOIN ride_hailing.driver_profiles d2 ON d2.user_id = u2.id
+		WHERE u1.email = 'driver.one@example.test'`).Scan(&status, &secondDriverStatus); err != nil {
 		t.Fatalf("read repeated seed state: %v", err)
 	}
 	if status != expectedFirstDriverStatus || secondDriverStatus != "available" {
 		t.Errorf("unexpected seeded driver availability: first=%q second=%q", status, secondDriverStatus)
 	}
-	if hashPrefix != "$2a$" && hashPrefix != "$2b$" && hashPrefix != "$2y$" {
-		t.Errorf("seeded password does not appear to be bcrypt hashed (prefix %q)", hashPrefix)
-	}
 	var economyDrivers, comfortDrivers int
 	if err := tx.QueryRow(ctx, `
 		SELECT count(*) FILTER (WHERE category = 'economy'),
 		       count(*) FILTER (WHERE category = 'comfort')
-		FROM ride_hailing.driver_categories
-		WHERE driver_id IN ('20000000-0000-4000-8000-000000000002', '20000000-0000-4000-8000-000000000003')`).Scan(
+		FROM ride_hailing.driver_categories c
+		JOIN ride_hailing.users u ON u.id = c.driver_id
+		WHERE u.email IN ('driver.one@example.test', 'driver.two@example.test')`).Scan(
 		&economyDrivers, &comfortDrivers); err != nil {
 		t.Fatalf("read seeded driver categories: %v", err)
 	}
@@ -213,8 +219,8 @@ func insertTestUser(t *testing.T, ctx context.Context, tx pgx.Tx, email, role st
 	t.Helper()
 	var id string
 	err := tx.QueryRow(ctx, `
-		INSERT INTO ride_hailing.users (email, display_name, role, password_hash)
-		VALUES ($1, 'Schema Check', $2, 'integration-test-hash')
+		INSERT INTO ride_hailing.users (email, display_name, role)
+		VALUES ($1, 'Schema Check', $2)
 		RETURNING id::text`, email, role).Scan(&id)
 	if err != nil {
 		t.Fatalf("insert test %s user: %v", role, err)

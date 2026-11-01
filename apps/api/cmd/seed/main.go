@@ -11,7 +11,6 @@ import (
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/config"
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/persistence"
 	"github.com/jackc/pgx/v5"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type locationFixture struct {
@@ -23,14 +22,13 @@ type locationFixture struct {
 }
 
 type userFixture struct {
-	id          string
 	email       string
 	displayName string
 	role        string
 }
 
 type driverFixture struct {
-	userID    string
+	userEmail string
 	latitude  float64
 	longitude float64
 }
@@ -46,14 +44,14 @@ var locationFixtures = []locationFixture{
 }
 
 var userFixtures = []userFixture{
-	{"20000000-0000-4000-8000-000000000001", "rider@example.test", "Demo Rider", "rider"},
-	{"20000000-0000-4000-8000-000000000002", "driver.one@example.test", "Demo Driver One", "driver"},
-	{"20000000-0000-4000-8000-000000000003", "driver.two@example.test", "Demo Driver Two", "driver"},
+	{"rider@example.test", "Demo Rider", "rider"},
+	{"driver.one@example.test", "Demo Driver One", "driver"},
+	{"driver.two@example.test", "Demo Driver Two", "driver"},
 }
 
 var driverFixtures = []driverFixture{
-	{"20000000-0000-4000-8000-000000000002", 31.5113, 74.3436},
-	{"20000000-0000-4000-8000-000000000003", 31.4686, 74.3580},
+	{"driver.one@example.test", 31.5113, 74.3436},
+	{"driver.two@example.test", 31.4686, 74.3580},
 }
 
 func main() {
@@ -72,11 +70,6 @@ func run() error {
 		return errors.New("set DEMO_SEED_ENABLED=true in the ignored .env file before running the seed command")
 	}
 
-	passwordHash, err := bcrypt.GenerateFromPassword([]byte(cfg.DemoAccountPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("hash demo account password: %w", err)
-	}
-
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	pool, err := persistence.NewPool(ctx, cfg.DatabaseURL)
@@ -91,7 +84,7 @@ func run() error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	if err := seedDemoData(ctx, tx, string(passwordHash)); err != nil {
+	if err := seedDemoData(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -101,7 +94,7 @@ func run() error {
 	return nil
 }
 
-func seedDemoData(ctx context.Context, tx pgx.Tx, passwordHash string) error {
+func seedDemoData(ctx context.Context, tx pgx.Tx) error {
 	for _, location := range locationFixtures {
 		result, err := tx.Exec(ctx, `
 			INSERT INTO ride_hailing.locations AS fixture_location
@@ -124,26 +117,34 @@ func seedDemoData(ctx context.Context, tx pgx.Tx, passwordHash string) error {
 		}
 	}
 
+	userIDs := make(map[string]string, len(userFixtures))
 	for _, user := range userFixtures {
-		result, err := tx.Exec(ctx, `
+		var supabaseID string
+		if err := tx.QueryRow(ctx, `
+			SELECT id::text
+			FROM auth.users
+			WHERE lower(email) = lower($1) AND deleted_at IS NULL`, user.email).Scan(&supabaseID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return errors.New("create the three demo email/password accounts in Supabase Auth before running the seed")
+			}
+			return fmt.Errorf("find Supabase Auth account %s: %w", user.email, err)
+		}
+
+		var appUserID string
+		if err := tx.QueryRow(ctx, `
 			INSERT INTO ride_hailing.users AS fixture_user
-				(id, email, display_name, role, password_hash)
-			VALUES ($1, $2, $3, $4, $5)
-			ON CONFLICT (id) DO UPDATE SET
+				(email, display_name, role, supabase_auth_id)
+			VALUES ($1, $2, $3, $4)
+			ON CONFLICT (lower(email)) DO UPDATE SET
 				email = EXCLUDED.email,
 				display_name = EXCLUDED.display_name,
 				role = EXCLUDED.role,
-				password_hash = EXCLUDED.password_hash,
+				supabase_auth_id = EXCLUDED.supabase_auth_id,
 				updated_at = now()
-			WHERE fixture_user.email = EXCLUDED.email
-			RETURNING id`,
-			user.id, user.email, user.displayName, user.role, passwordHash)
-		if err != nil {
+			RETURNING id::text`, user.email, user.displayName, user.role, supabaseID).Scan(&appUserID); err != nil {
 			return fmt.Errorf("seed demo user %s: %w", user.email, err)
 		}
-		if result.RowsAffected() != 1 {
-			return fmt.Errorf("seed demo user %s: fixture ID is already used by another account", user.email)
-		}
+		userIDs[user.email] = appUserID
 	}
 
 	for _, driver := range driverFixtures {
@@ -156,17 +157,17 @@ func seedDemoData(ctx context.Context, tx pgx.Tx, passwordHash string) error {
 				demo_latitude = EXCLUDED.demo_latitude,
 				demo_longitude = EXCLUDED.demo_longitude,
 				updated_at = now()`,
-			driver.userID, driver.latitude, driver.longitude)
+			userIDs[driver.userEmail], driver.latitude, driver.longitude)
 		if err != nil {
-			return fmt.Errorf("seed driver profile %s: %w", driver.userID, err)
+			return fmt.Errorf("seed driver profile %s: %w", driver.userEmail, err)
 		}
 		for _, category := range []string{"economy", "comfort"} {
 			_, err = tx.Exec(ctx, `
 				INSERT INTO ride_hailing.driver_categories (driver_id, category)
 				VALUES ($1, $2)
-				ON CONFLICT (driver_id, category) DO NOTHING`, driver.userID, category)
+				ON CONFLICT (driver_id, category) DO NOTHING`, userIDs[driver.userEmail], category)
 			if err != nil {
-				return fmt.Errorf("seed driver category for %s: %w", driver.userID, err)
+				return fmt.Errorf("seed driver category for %s: %w", driver.userEmail, err)
 			}
 		}
 	}

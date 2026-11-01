@@ -14,148 +14,231 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const lifecycleRaceIterations = 5
+
 func TestPostgresTwoDriversCannotAcceptSameRide(t *testing.T) {
-	pool := openRideIntegrationPool(t, 8)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	fixture := createLifecycleFixture(t, ctx, pool, 1, 2, 1)
-	defer cleanupLifecycleFixture(t, pool, fixture)
-	service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
+	for iteration := 1; iteration <= lifecycleRaceIterations; iteration++ {
+		t.Run(fmt.Sprintf("iteration_%02d", iteration), func(t *testing.T) {
+			pool := openRideIntegrationPool(t, 8)
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			fixture := createLifecycleFixture(t, ctx, pool, 1, 2, 1)
+			defer cleanupLifecycleFixture(t, pool, fixture)
+			service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
 
-	start := make(chan struct{})
-	results := make(chan acceptResult, 2)
-	var workers sync.WaitGroup
-	for _, driverID := range fixture.DriverIDs {
-		workers.Add(1)
-		go func(driverID string) {
-			defer workers.Done()
-			<-start
-			ride, err := service.AcceptRide(ctx, fixture.RideIDs[0], driverID)
-			results <- acceptResult{ride: ride, err: err}
-		}(driverID)
-	}
-	close(start)
-	workers.Wait()
-	close(results)
+			start := make(chan struct{})
+			results := make(chan acceptResult, 2)
+			var workers sync.WaitGroup
+			for _, driverID := range fixture.DriverIDs {
+				workers.Add(1)
+				go func(driverID string) {
+					defer workers.Done()
+					<-start
+					ride, err := service.AcceptRide(ctx, fixture.RideIDs[0], driverID)
+					results <- acceptResult{ride: ride, err: err}
+				}(driverID)
+			}
+			close(start)
+			workers.Wait()
+			close(results)
 
-	winners, conflicts := 0, 0
-	for result := range results {
-		if result.err == nil && result.ride.Status == "accepted" {
-			winners++
-			continue
-		}
-		if errors.Is(result.err, ErrStateConflict) || errors.Is(result.err, ErrDriverUnavailable) {
-			conflicts++
-			continue
-		}
-		t.Fatalf("unexpected same-ride acceptance outcome: ride=%+v err=%v", result.ride, result.err)
+			winners, conflicts := 0, 0
+			for result := range results {
+				if result.err == nil && result.ride.Status == "accepted" {
+					winners++
+					continue
+				}
+				if errors.Is(result.err, ErrStateConflict) || errors.Is(result.err, ErrDriverUnavailable) {
+					conflicts++
+					continue
+				}
+				t.Fatalf("unexpected same-ride acceptance outcome: ride=%+v err=%v", result.ride, result.err)
+			}
+			if winners != 1 || conflicts != 1 {
+				t.Fatalf("same-ride race outcomes winners=%d conflicts=%d, want one each", winners, conflicts)
+			}
+			assertLifecycleState(t, ctx, pool, fixture.RideIDs[0], "accepted", 1, 1)
+		})
 	}
-	if winners != 1 || conflicts != 1 {
-		t.Fatalf("same-ride race outcomes winners=%d conflicts=%d, want one each", winners, conflicts)
-	}
-	assertLifecycleState(t, ctx, pool, fixture.RideIDs[0], "accepted", 1, 1)
 }
 
 func TestPostgresOneDriverCannotAcceptTwoRides(t *testing.T) {
-	pool := openRideIntegrationPool(t, 8)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	fixture := createLifecycleFixture(t, ctx, pool, 2, 1, 2)
-	defer cleanupLifecycleFixture(t, pool, fixture)
-	service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
-	driverID := fixture.DriverIDs[0]
+	for iteration := 1; iteration <= lifecycleRaceIterations; iteration++ {
+		t.Run(fmt.Sprintf("iteration_%02d", iteration), func(t *testing.T) {
+			pool := openRideIntegrationPool(t, 8)
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			fixture := createLifecycleFixture(t, ctx, pool, 2, 1, 2)
+			defer cleanupLifecycleFixture(t, pool, fixture)
+			service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
+			driverID := fixture.DriverIDs[0]
 
-	start := make(chan struct{})
-	results := make(chan acceptResult, 2)
-	var workers sync.WaitGroup
-	for _, rideID := range fixture.RideIDs {
-		workers.Add(1)
-		go func(rideID string) {
-			defer workers.Done()
-			<-start
-			ride, err := service.AcceptRide(ctx, rideID, driverID)
-			results <- acceptResult{ride: ride, err: err}
-		}(rideID)
-	}
-	close(start)
-	workers.Wait()
-	close(results)
+			start := make(chan struct{})
+			results := make(chan acceptResult, 2)
+			var workers sync.WaitGroup
+			for _, rideID := range fixture.RideIDs {
+				workers.Add(1)
+				go func(rideID string) {
+					defer workers.Done()
+					<-start
+					ride, err := service.AcceptRide(ctx, rideID, driverID)
+					results <- acceptResult{ride: ride, err: err}
+				}(rideID)
+			}
+			close(start)
+			workers.Wait()
+			close(results)
 
-	winners, conflicts := 0, 0
-	for result := range results {
-		if result.err == nil && result.ride.Status == "accepted" {
-			winners++
-			continue
-		}
-		if errors.Is(result.err, ErrStateConflict) || errors.Is(result.err, ErrDriverUnavailable) {
-			conflicts++
-			continue
-		}
-		t.Fatalf("unexpected same-driver acceptance outcome: ride=%+v err=%v", result.ride, result.err)
-	}
-	if winners != 1 || conflicts != 1 {
-		t.Fatalf("same-driver race outcomes winners=%d conflicts=%d, want one each", winners, conflicts)
-	}
-	var activeAssignments int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.ride_assignments WHERE driver_id = $1::uuid AND status = 'active'`, driverID).Scan(&activeAssignments); err != nil {
-		t.Fatalf("count active driver assignments: %v", err)
-	}
-	if activeAssignments != 1 {
-		t.Fatalf("active assignment count = %d, want 1", activeAssignments)
+			winners, conflicts := 0, 0
+			for result := range results {
+				if result.err == nil && result.ride.Status == "accepted" {
+					winners++
+					continue
+				}
+				if errors.Is(result.err, ErrStateConflict) || errors.Is(result.err, ErrDriverUnavailable) {
+					conflicts++
+					continue
+				}
+				t.Fatalf("unexpected same-driver acceptance outcome: ride=%+v err=%v", result.ride, result.err)
+			}
+			if winners != 1 || conflicts != 1 {
+				t.Fatalf("same-driver race outcomes winners=%d conflicts=%d, want one each", winners, conflicts)
+			}
+			var activeAssignments int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.ride_assignments WHERE driver_id = $1::uuid AND status = 'active'`, driverID).Scan(&activeAssignments); err != nil {
+				t.Fatalf("count active driver assignments: %v", err)
+			}
+			if activeAssignments != 1 {
+				t.Fatalf("active assignment count = %d, want 1", activeAssignments)
+			}
+		})
 	}
 }
 
 func TestPostgresAcceptRacingCancellationLeavesConsistentState(t *testing.T) {
-	pool := openRideIntegrationPool(t, 6)
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	fixture := createLifecycleFixture(t, ctx, pool, 1, 1, 1)
-	defer cleanupLifecycleFixture(t, pool, fixture)
-	service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
+	for iteration := 1; iteration <= lifecycleRaceIterations; iteration++ {
+		t.Run(fmt.Sprintf("iteration_%02d", iteration), func(t *testing.T) {
+			pool := openRideIntegrationPool(t, 6)
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			fixture := createLifecycleFixture(t, ctx, pool, 1, 1, 1)
+			defer cleanupLifecycleFixture(t, pool, fixture)
+			service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
 
-	start := make(chan struct{})
-	acceptResults := make(chan acceptResult, 1)
-	cancelResults := make(chan error, 1)
-	var workers sync.WaitGroup
-	workers.Add(2)
-	go func() {
-		defer workers.Done()
-		<-start
-		ride, err := service.AcceptRide(ctx, fixture.RideIDs[0], fixture.DriverIDs[0])
-		acceptResults <- acceptResult{ride: ride, err: err}
-	}()
-	go func() {
-		defer workers.Done()
-		<-start
-		_, err := service.CancelRide(ctx, fixture.RideIDs[0], fixture.RiderIDs[0])
-		cancelResults <- err
-	}()
-	close(start)
-	workers.Wait()
-	accept := <-acceptResults
-	cancelErr := <-cancelResults
-	if cancelErr != nil {
-		t.Fatalf("rider cancellation lost its valid race: %v", cancelErr)
+			start := make(chan struct{})
+			acceptResults := make(chan acceptResult, 1)
+			cancelResults := make(chan error, 1)
+			var workers sync.WaitGroup
+			workers.Add(2)
+			go func() {
+				defer workers.Done()
+				<-start
+				ride, err := service.AcceptRide(ctx, fixture.RideIDs[0], fixture.DriverIDs[0])
+				acceptResults <- acceptResult{ride: ride, err: err}
+			}()
+			go func() {
+				defer workers.Done()
+				<-start
+				_, err := service.CancelRide(ctx, fixture.RideIDs[0], fixture.RiderIDs[0])
+				cancelResults <- err
+			}()
+			close(start)
+			workers.Wait()
+			accept := <-acceptResults
+			cancelErr := <-cancelResults
+			if cancelErr != nil {
+				t.Fatalf("rider cancellation lost its valid race: %v", cancelErr)
+			}
+			if accept.err != nil && !errors.Is(accept.err, ErrStateConflict) {
+				t.Fatalf("unexpected acceptance race error: %v", accept.err)
+			}
+			assertLifecycleState(t, ctx, pool, fixture.RideIDs[0], "cancelled", 0, 0)
+			var assignmentCount int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.ride_assignments WHERE ride_id = $1::uuid`, fixture.RideIDs[0]).Scan(&assignmentCount); err != nil {
+				t.Fatalf("count race assignment rows: %v", err)
+			}
+			if assignmentCount != 0 && assignmentCount != 1 {
+				t.Fatalf("cancellation race left %d assignment rows, want zero or one closed row", assignmentCount)
+			}
+			if assignmentCount == 1 {
+				var assignmentStatus string
+				if err := pool.QueryRow(ctx, `SELECT status::text FROM ride_hailing.ride_assignments WHERE ride_id = $1::uuid`, fixture.RideIDs[0]).Scan(&assignmentStatus); err != nil {
+					t.Fatalf("read terminal race assignment: %v", err)
+				}
+				if assignmentStatus != "cancelled" {
+					t.Fatalf("terminal race assignment status = %q, want cancelled", assignmentStatus)
+				}
+			}
+		})
 	}
-	if accept.err != nil && !errors.Is(accept.err, ErrStateConflict) {
-		t.Fatalf("unexpected acceptance race error: %v", accept.err)
-	}
-	assertLifecycleState(t, ctx, pool, fixture.RideIDs[0], "cancelled", 0, 0)
-	var assignmentCount int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.ride_assignments WHERE ride_id = $1::uuid`, fixture.RideIDs[0]).Scan(&assignmentCount); err != nil {
-		t.Fatalf("count race assignment rows: %v", err)
-	}
-	if assignmentCount != 0 && assignmentCount != 1 {
-		t.Fatalf("cancellation race left %d assignment rows, want zero or one closed row", assignmentCount)
-	}
-	if assignmentCount == 1 {
-		var assignmentStatus string
-		if err := pool.QueryRow(ctx, `SELECT status::text FROM ride_hailing.ride_assignments WHERE ride_id = $1::uuid`, fixture.RideIDs[0]).Scan(&assignmentStatus); err != nil {
-			t.Fatalf("read terminal race assignment: %v", err)
-		}
-		if assignmentStatus != "cancelled" {
-			t.Fatalf("terminal race assignment status = %q, want cancelled", assignmentStatus)
-		}
+}
+
+func TestPostgresCompletionRacingCancellationLeavesConsistentState(t *testing.T) {
+	for iteration := 1; iteration <= lifecycleRaceIterations; iteration++ {
+		t.Run(fmt.Sprintf("iteration_%02d", iteration), func(t *testing.T) {
+			pool := openRideIntegrationPool(t, 6)
+			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+			defer cancel()
+			fixture := createLifecycleFixture(t, ctx, pool, 1, 1, 1)
+			defer cleanupLifecycleFixture(t, pool, fixture)
+			service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
+			rideID, riderID, driverID := fixture.RideIDs[0], fixture.RiderIDs[0], fixture.DriverIDs[0]
+
+			if _, err := service.AcceptRide(ctx, rideID, driverID); err != nil {
+				t.Fatalf("accept ride before completion/cancellation race: %v", err)
+			}
+
+			start := make(chan struct{})
+			completeResults := make(chan error, 1)
+			cancelResults := make(chan error, 1)
+			var workers sync.WaitGroup
+			workers.Add(2)
+			go func() {
+				defer workers.Done()
+				<-start
+				_, err := service.CompleteRide(ctx, rideID, driverID)
+				completeResults <- err
+			}()
+			go func() {
+				defer workers.Done()
+				<-start
+				_, err := service.CancelRide(ctx, rideID, riderID)
+				cancelResults <- err
+			}()
+			close(start)
+			workers.Wait()
+			completeErr := <-completeResults
+			cancelErr := <-cancelResults
+
+			if completeErr == nil && errors.Is(cancelErr, ErrStateConflict) {
+				assertLifecycleState(t, ctx, pool, rideID, "completed", 0, 0)
+			} else if cancelErr == nil && errors.Is(completeErr, ErrStateConflict) {
+				assertLifecycleState(t, ctx, pool, rideID, "cancelled", 0, 0)
+			} else {
+				t.Fatalf("completion/cancellation race returned complete=%v cancel=%v; want one success and one state conflict", completeErr, cancelErr)
+			}
+
+			var rideStatus, assignmentStatus, driverStatus string
+			if err := pool.QueryRow(ctx, `SELECT status::text FROM ride_hailing.rides WHERE id = $1::uuid`, rideID).Scan(&rideStatus); err != nil {
+				t.Fatalf("read terminal ride after completion/cancellation race: %v", err)
+			}
+			if err := pool.QueryRow(ctx, `SELECT status::text FROM ride_hailing.ride_assignments WHERE ride_id = $1::uuid`, rideID).Scan(&assignmentStatus); err != nil {
+				t.Fatalf("read terminal assignment after completion/cancellation race: %v", err)
+			}
+			if err := pool.QueryRow(ctx, `SELECT status::text FROM ride_hailing.driver_profiles WHERE user_id = $1::uuid`, driverID).Scan(&driverStatus); err != nil {
+				t.Fatalf("read released driver after completion/cancellation race: %v", err)
+			}
+			if assignmentStatus != rideStatus || driverStatus != "available" {
+				t.Fatalf("post-race rows ride=%q assignment=%q driver=%q; want matching terminal states and an available driver", rideStatus, assignmentStatus, driverStatus)
+			}
+			var openRides int
+			if err := pool.QueryRow(ctx, `SELECT count(*) FROM ride_hailing.rides WHERE rider_id = $1::uuid AND status IN ('requested', 'accepted')`, riderID).Scan(&openRides); err != nil {
+				t.Fatalf("count open rides after completion/cancellation race: %v", err)
+			}
+			if openRides != 0 {
+				t.Fatalf("open rides after completion/cancellation race = %d, want 0", openRides)
+			}
+		})
 	}
 }
 
@@ -325,8 +408,8 @@ func createLifecycleFixture(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		var id string
 		email := fmt.Sprintf("%s-rider-%d@example.test", fixturePrefix, index)
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO ride_hailing.users (email, display_name, role, password_hash)
-			VALUES ($1, 'Stage 6 Test Rider', 'rider', 'integration-test-hash')
+			INSERT INTO ride_hailing.users (email, display_name, role)
+			VALUES ($1, 'Stage 6 Test Rider', 'rider')
 			RETURNING id::text`, email).Scan(&id); err != nil {
 			t.Fatalf("insert lifecycle rider: %v", err)
 		}
@@ -336,8 +419,8 @@ func createLifecycleFixture(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 		var id string
 		email := fmt.Sprintf("%s-driver-%d@example.test", fixturePrefix, index)
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO ride_hailing.users (email, display_name, role, password_hash)
-			VALUES ($1, 'Stage 6 Test Driver', 'driver', 'integration-test-hash')
+			INSERT INTO ride_hailing.users (email, display_name, role)
+			VALUES ($1, 'Stage 6 Test Driver', 'driver')
 			RETURNING id::text`, email).Scan(&id); err != nil {
 			t.Fatalf("insert lifecycle driver account: %v", err)
 		}

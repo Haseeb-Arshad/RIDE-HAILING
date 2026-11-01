@@ -1,0 +1,53 @@
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, "feat/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/api/go.mod
+          cache-dependency-path: apps/api/go.sum
+      - name: Check Go formatting
+        working-directory: apps/api
+        run: test -z "$(gofmt -l .)"
+      - name: Run Go tests
+        working-directory: apps/api
+        run: go test ./... -count=1
+      - name: Run Go vet
+        working-directory: apps/api
+        run: go vet ./...
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - name: Install dependencies
+        working-directory: apps/web
+        run: npm ci --no-audit
+      - name: Run component tests
+        working-directory: apps/web
+        run: npm test
+      - name: Run lint
+        working-directory: apps/web
+        run: npm run lint
+      - name: Check TypeScript
+        working-directory: apps/web
+        run: npx tsc --noEmit
+      - name: Build web app
+        working-directory: apps/web
+        run: npm run build
