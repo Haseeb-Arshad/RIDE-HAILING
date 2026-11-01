@@ -40,7 +40,7 @@ func run(logger *slog.Logger) error {
 		logger.Warn("database is not configured; readiness will remain unavailable")
 	}
 
-	handler := httptransport.NewHandler(pool, cfg.RequestTimeout, cfg.AppOrigin, cfg.SessionCookieSecure, logger)
+	handler := httptransport.NewHandler(pool, cfg.RequestTimeout, cfg.AppOrigin, cfg.SessionCookieSecure, cfg.MatchRadiusKM, logger)
 	server := &http.Server{
 		Addr:              net.JoinHostPort("127.0.0.1", cfg.Port),
 		Handler:           handler,

@@ -41,3 +41,7 @@ Require an idempotency key per rider and fingerprint the normalized request. Rep
 ## ADR 10 — Store opaque sessions in PostgreSQL
 
 Give each login a random 32-byte cookie token and store only its SHA-256 hash with expiry, revocation, and a hash of a session-bound CSRF token. Resolve identity from the database on every request so logout and expiry take effect across API restarts. The trade-off is a database lookup on authenticated requests; it keeps session revocation immediate without a separate cache or token-signing key.
+
+## ADR 11 — Serialize each rider's idempotent booking attempts
+
+Lock the authenticated rider row before checking the idempotency key or open-ride constraint. Requests from the same rider then observe each other's committed key and ride, so concurrent retries replay one result; the database's unique key and partial open-ride index remain the final guards. This briefly serializes booking attempts for one rider and avoids an application mutex or a second lock table.

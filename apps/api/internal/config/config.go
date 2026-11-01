@@ -20,6 +20,7 @@ type Config struct {
 	SessionCookieSecure bool
 	DemoSeedEnabled     bool
 	DemoAccountPassword string
+	MatchRadiusKM       int
 	RequestTimeout      time.Duration
 }
 
@@ -71,6 +72,12 @@ func Load() (Config, error) {
 		return Config{}, errors.New("REQUEST_TIMEOUT must be between 1ms and 1m")
 	}
 
+	matchRadiusText := valueOrDefault("MATCH_RADIUS_KM", "20")
+	matchRadiusKM, err := strconv.Atoi(matchRadiusText)
+	if err != nil || matchRadiusKM < 1 || matchRadiusKM > 200 {
+		return Config{}, errors.New("MATCH_RADIUS_KM must be an integer between 1 and 200")
+	}
+
 	return Config{
 		Port:                port,
 		DatabaseURL:         databaseURL,
@@ -78,6 +85,7 @@ func Load() (Config, error) {
 		SessionCookieSecure: secure,
 		DemoSeedEnabled:     seedEnabled,
 		DemoAccountPassword: demoAccountPassword,
+		MatchRadiusKM:       matchRadiusKM,
 		RequestTimeout:      requestTimeout,
 	}, nil
 }

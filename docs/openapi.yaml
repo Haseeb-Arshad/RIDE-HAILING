@@ -87,6 +87,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/Unavailable' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/auth/logout:
     post:
       tags: [Authentication]
@@ -121,6 +122,7 @@ paths:
                     items: { $ref: '#/components/schemas/Location' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/quotes:
     post:
       tags: [Locations and quotes]
@@ -143,8 +145,11 @@ paths:
               schema: { $ref: '#/components/schemas/Quote' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { $ref: '#/components/responses/TooLarge' }
         '422': { $ref: '#/components/responses/ValidationError' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides:
     post:
       tags: [Rider rides]
@@ -185,6 +190,7 @@ paths:
         '413': { $ref: '#/components/responses/TooLarge' }
         '422': { $ref: '#/components/responses/ValidationError' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides/current:
     get:
       tags: [Rider rides]
@@ -207,6 +213,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides/{id}:
     get:
       tags: [Rider rides]
@@ -225,6 +232,7 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
         '500': { $ref: '#/components/responses/InternalError' }
+        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides/{id}/accept:
     post:
       tags: [Driver]
