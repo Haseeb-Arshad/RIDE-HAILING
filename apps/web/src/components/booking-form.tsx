@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type Category, type Location, type Quote, type QuoteInput, type Ride } from "@/lib/api";
 import { formatDistance, formatMoney } from "@/lib/format";
 import { GoogleRouteMap } from "@/components/google-route-map";
+import { Armchair, ArrowRight, CarFront, Check, MapPin, Navigation, ShieldCheck, Sparkles } from "lucide-react";
 
 type BookingFormProps = {
   locations: Location[];
@@ -149,6 +150,7 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
       <section className="panel" aria-labelledby="booking-title">
         <div className="panel-head">
           <div>
+            <p className="eyebrow booking-step">01 / YOUR JOURNEY</p>
             <h2 id="booking-title">Plan a ride</h2>
             <p>Choose a route and review the estimate before requesting.</p>
           </div>
@@ -161,7 +163,7 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
           <div className="form-stack">
             <div className="field-row">
               <div className="field-group">
-                <label htmlFor="pickup">Pickup</label>
+                <label htmlFor="pickup"><Navigation size={15} aria-hidden="true" />Pickup</label>
                 <select id="pickup" value={pickupID} onChange={(event) => { setPickupID(event.target.value); resetEstimate(); }}>
                   <option value="">Choose a pickup</option>
                   {locations.map((location) => (
@@ -170,7 +172,7 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
                 </select>
               </div>
               <div className="field-group">
-                <label htmlFor="destination">Destination</label>
+                <label htmlFor="destination"><MapPin size={15} aria-hidden="true" />Destination</label>
                 <select id="destination" value={destinationID} onChange={(event) => { setDestinationID(event.target.value); resetEstimate(); }}>
                   <option value="">Choose a destination</option>
                   {locations.map((location) => (
@@ -188,11 +190,13 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
               <div className="category-options">
                 <label className="category-option">
                   <input type="radio" name="category" value="economy" checked={category === "economy"} onChange={() => { setCategory("economy"); resetEstimate(); }} />
+                  <span className="category-art"><CarFront size={32} strokeWidth={1.5} aria-hidden="true" /></span>
                   <strong>Economy</strong>
                   <span>A practical option for everyday trips.</span>
                 </label>
                 <label className="category-option">
                   <input type="radio" name="category" value="comfort" checked={category === "comfort"} onChange={() => { setCategory("comfort"); resetEstimate(); }} />
+                  <span className="category-art"><Armchair size={32} strokeWidth={1.5} aria-hidden="true" /></span>
                   <strong>Comfort</strong>
                   <span>More room for your journey.</span>
                 </label>
@@ -200,8 +204,9 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
             </fieldset>
 
             <div className="button-stack">
-              <button className="button button-quiet button-wide" type="button" onClick={() => void reviewEstimate()} disabled={!validRoute || quotePending || createPending}>
+              <button className="button button-primary button-wide" type="button" onClick={() => void reviewEstimate()} disabled={!validRoute || quotePending || createPending}>
                 {quotePending ? "Calculating estimate…" : "Review fare estimate"}
+                <ArrowRight size={18} aria-hidden="true" />
               </button>
             </div>
 
@@ -219,10 +224,10 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
                   <span>{quote.pickup_eta_minutes === null ? "Pickup ETA unavailable" : `About ${quote.pickup_eta_minutes} min pickup`}</span>
                 </div>
                 {quote.pickup_eta_minutes === null && <p className="quote-disclaimer">No eligible available driver could be estimated for this route right now.</p>}
-                <p className="quote-disclaimer">Fare and distance are estimated by the ride service using fixed Lahore demo locations. They are not live route or market prices.</p>
+                <p className="quote-disclaimer">An approximate fare between demo stops. Final road distance and traffic are not included.</p>
                 <button className="button button-primary button-wide" type="submit" disabled={createPending}>
                   {createPending ? "Requesting ride…" : "Request this ride"}
-                  {!createPending && <span aria-hidden="true">→</span>}
+                  {!createPending && <ArrowRight size={18} aria-hidden="true" />}
                 </button>
                 {createPending && <p className="quote-disclaimer" role="status">Your request is being saved. Please keep this page open.</p>}
               </form>
@@ -235,8 +240,9 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
         <section className="panel" aria-labelledby="route-preview-title">
           <div className="panel-head">
             <div>
+              <p className="eyebrow booking-step">02 / THE WAY THERE</p>
               <h2 id="route-preview-title">Your route</h2>
-              <p>Map view for the seeded Lahore pickup points.</p>
+              <p>A little context for your next journey.</p>
             </div>
           </div>
           <GoogleRouteMap locations={locations} pickupID={pickupID} destinationID={destinationID} />
@@ -249,18 +255,18 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
               </div>
             </div>
           ) : (
-            <div className="estimate-empty"><p>Select two different places to preview your route.</p></div>
+            <div className="estimate-empty"><Navigation size={24} strokeWidth={1.5} aria-hidden="true" /><p>Your journey starts with two stops. Choose a pickup and destination.</p></div>
           )}
         </section>
 
         <section className="panel">
           <div className="panel-head">
-            <div><h2>Before you request</h2></div>
+            <div className="section-icon-title"><ShieldCheck size={20} aria-hidden="true" /><h2>Good to know</h2></div>
           </div>
-          <ul className="plain-list">
-            <li>The Go service calculates the fare and pickup estimate.</li>
-            <li>Your ride is saved before its status appears here.</li>
-            <li>A driver match is not guaranteed by this demo estimate.</li>
+          <ul className="plain-list booking-notes">
+            <li><Check size={15} aria-hidden="true" />Review your estimate before you book.</li>
+            <li><Check size={15} aria-hidden="true" />Follow each update from your ride page.</li>
+            <li><Sparkles size={15} aria-hidden="true" />Demo availability depends on eligible drivers.</li>
           </ul>
         </section>
       </aside>

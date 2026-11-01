@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import "@fontsource-variable/dm-sans";
 import { AuthProvider } from "@/lib/auth-provider";
 import "./globals.css";
 
