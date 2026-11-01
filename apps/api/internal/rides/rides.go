@@ -3,11 +3,14 @@ package rides
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/drivers"
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/pricing"
 )
 
@@ -16,6 +19,9 @@ var (
 	ErrIdempotencyConflict = errors.New("idempotency key was already used for a different request")
 	ErrOpenRideConflict    = errors.New("rider already has an open ride")
 	ErrRideNotFound        = errors.New("ride not found")
+	ErrDriverNotFound      = errors.New("driver profile not found")
+	ErrDriverUnavailable   = errors.New("driver is not available")
+	ErrStateConflict       = errors.New("ride state conflict")
 	ErrStoreUnavailable    = errors.New("ride storage unavailable")
 )
 
@@ -61,12 +67,45 @@ type Ride struct {
 	UpdatedAt               time.Time        `json:"updated_at"`
 }
 
+type DriverRequest struct {
+	ID                      string           `json:"id"`
+	Pickup                  pricing.Location `json:"pickup"`
+	Destination             pricing.Location `json:"destination"`
+	Category                string           `json:"category"`
+	EstimatedFarePaisa      int64            `json:"estimated_fare_paisa"`
+	EstimatedDistanceMeters int64            `json:"estimated_distance_meters"`
+	Currency                string           `json:"currency"`
+	Status                  string           `json:"status"`
+	CreatedAt               time.Time        `json:"created_at"`
+	PickupDistanceMeters    int64            `json:"pickup_distance_meters"`
+}
+
+type DriverRequestPage struct {
+	Requests   []DriverRequest `json:"requests"`
+	NextCursor *string         `json:"next_cursor"`
+}
+
+type AssignmentView struct {
+	Ride *Ride `json:"ride"`
+}
+
+type RequestCursor struct {
+	CreatedAt time.Time
+	RideID    string
+}
+
 type Repository interface {
 	ListLocations(context.Context) ([]pricing.Location, error)
 	Quote(context.Context, QuoteRequest, int) (pricing.Quote, error)
 	CreateRide(context.Context, string, QuoteRequest, string, []byte, int) (Ride, bool, error)
 	CurrentRide(context.Context, string) (*Ride, error)
 	GetRide(context.Context, string, string, string) (*Ride, error)
+	SetAvailability(context.Context, string, drivers.Availability) (drivers.Availability, error)
+	ListDriverRequests(context.Context, string, int, *RequestCursor, int) (DriverRequestPage, error)
+	CurrentAssignment(context.Context, string) (*AssignmentView, error)
+	AcceptRide(context.Context, string, string, int) (Ride, error)
+	CancelRide(context.Context, string, string) (Ride, error)
+	CompleteRide(context.Context, string, string) (Ride, error)
 }
 
 type Service struct {
@@ -132,6 +171,56 @@ func (s *Service) GetRide(ctx context.Context, rideID, actorID, actorRole string
 	return s.repository.GetRide(ctx, normalizedID, actorID, actorRole)
 }
 
+func (s *Service) SetAvailability(ctx context.Context, driverID, value string) (drivers.Availability, error) {
+	status, err := drivers.ParseAvailability(value)
+	if err != nil {
+		return "", ValidationError{Message: err.Error() + "."}
+	}
+	return s.repository.SetAvailability(ctx, driverID, status)
+}
+
+func (s *Service) ListDriverRequests(ctx context.Context, driverID string, limit int, cursorValue string) (DriverRequestPage, error) {
+	if limit == 0 {
+		limit = 25
+	}
+	if limit < 1 || limit > 50 {
+		return DriverRequestPage{}, ValidationError{Message: "Limit must be between 1 and 50."}
+	}
+	cursor, err := decodeRequestCursor(cursorValue)
+	if err != nil {
+		return DriverRequestPage{}, ValidationError{Message: "Cursor is invalid."}
+	}
+	return s.repository.ListDriverRequests(ctx, driverID, limit, cursor, s.matchRadiusKM)
+}
+
+func (s *Service) CurrentAssignment(ctx context.Context, driverID string) (*AssignmentView, error) {
+	return s.repository.CurrentAssignment(ctx, driverID)
+}
+
+func (s *Service) AcceptRide(ctx context.Context, rideID, driverID string) (Ride, error) {
+	normalizedID, valid := normalizeUUID(rideID)
+	if !valid {
+		return Ride{}, ErrRideNotFound
+	}
+	return s.repository.AcceptRide(ctx, normalizedID, driverID, s.matchRadiusKM)
+}
+
+func (s *Service) CancelRide(ctx context.Context, rideID, riderID string) (Ride, error) {
+	normalizedID, valid := normalizeUUID(rideID)
+	if !valid {
+		return Ride{}, ErrRideNotFound
+	}
+	return s.repository.CancelRide(ctx, normalizedID, riderID)
+}
+
+func (s *Service) CompleteRide(ctx context.Context, rideID, driverID string) (Ride, error) {
+	normalizedID, valid := normalizeUUID(rideID)
+	if !valid {
+		return Ride{}, ErrRideNotFound
+	}
+	return s.repository.CompleteRide(ctx, normalizedID, driverID)
+}
+
 func normalizeRequest(request QuoteRequest) (QuoteRequest, error) {
 	pickupID, pickupValid := normalizeUUID(request.PickupLocationID)
 	destinationID, destinationValid := normalizeUUID(request.DestinationLocationID)
@@ -171,4 +260,50 @@ func validIdempotencyKey(value string) bool {
 		}
 	}
 	return true
+}
+
+func encodeRequestCursor(createdAt time.Time, rideID string) string {
+	value := createdAt.UTC().Format(time.RFC3339Nano) + "\n" + rideID
+	return base64.RawURLEncoding.EncodeToString([]byte(value))
+}
+
+func decodeRequestCursor(value string) (*RequestCursor, error) {
+	if value == "" {
+		return nil, nil
+	}
+	if len(value) > 512 {
+		return nil, errors.New("cursor too long")
+	}
+	decoded, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return nil, err
+	}
+	parts := strings.Split(string(decoded), "\n")
+	if len(parts) != 2 {
+		return nil, errors.New("cursor shape is invalid")
+	}
+	createdAt, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return nil, err
+	}
+	rideID, valid := normalizeUUID(parts[1])
+	if !valid {
+		return nil, errors.New("cursor ride ID is invalid")
+	}
+	return &RequestCursor{CreatedAt: createdAt.UTC(), RideID: rideID}, nil
+}
+
+func ParseRequestLimit(value string) (int, error) {
+	if value == "" {
+		return 25, nil
+	}
+	limit, err := strconv.Atoi(value)
+	if err != nil || limit < 1 || limit > 50 {
+		return 0, ValidationError{Message: "Limit must be an integer between 1 and 50."}
+	}
+	return limit, nil
+}
+
+func encodeCursorForRequest(request DriverRequest) string {
+	return encodeRequestCursor(request.CreatedAt, request.ID)
 }

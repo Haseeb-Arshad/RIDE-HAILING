@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/auth"
+	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/drivers"
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/pricing"
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/rides"
 )
@@ -163,6 +164,142 @@ func TestRideReadConcealsOtherRidersRide(t *testing.T) {
 	}
 }
 
+func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.T) {
+	repository := newHTTPRideRepository()
+	router := newRideTestRouter(auth.NewService(newHTTPAuthRepository(t)), repository)
+	riderCookie, riderCSRF := loginForRideTest(t, router, "rider@example.test")
+	driverOneCookie, driverOneCSRF := loginForRideTest(t, router, "driver.one@example.test")
+	driverTwoCookie, driverTwoCSRF := loginForRideTest(t, router, "driver.two@example.test")
+
+	requests := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests", nil)
+	request.AddCookie(driverOneCookie)
+	router.ServeHTTP(requests, request)
+	if requests.Code != http.StatusOK || !strings.Contains(requests.Body.String(), `"requests":[]`) {
+		t.Fatalf("empty driver request list status=%d body=%s", requests.Code, requests.Body.String())
+	}
+	badLimit := httptest.NewRecorder()
+	badLimitRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests?limit=51", nil)
+	badLimitRequest.AddCookie(driverOneCookie)
+	router.ServeHTTP(badLimit, badLimitRequest)
+	if badLimit.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("out-of-range driver request limit status = %d, want 422", badLimit.Code)
+	}
+	badCursor := httptest.NewRecorder()
+	badCursorRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests?cursor=not-base64", nil)
+	badCursorRequest.AddCookie(driverOneCookie)
+	router.ServeHTTP(badCursor, badCursorRequest)
+	if badCursor.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("malformed driver request cursor status = %d, want 422", badCursor.Code)
+	}
+
+	riderAvailability := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"offline"}`, riderCookie, riderCSRF, "", true)
+	if riderAvailability.Code != http.StatusForbidden {
+		t.Fatalf("rider availability status = %d, want 403", riderAvailability.Code)
+	}
+	noCSRF := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"offline"}`, driverOneCookie, "", "", false)
+	if noCSRF.Code != http.StatusForbidden {
+		t.Fatalf("availability without CSRF status = %d, want 403", noCSRF.Code)
+	}
+	invalidAvailability := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"busy"}`, driverOneCookie, driverOneCSRF, "", true)
+	if invalidAvailability.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("manual busy status = %d, want 422", invalidAvailability.Code)
+	}
+	forgedAvailability := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"available","driver_id":"20000000-0000-4000-8000-000000000003"}`, driverOneCookie, driverOneCSRF, "", true)
+	if forgedAvailability.Code != http.StatusBadRequest {
+		t.Fatalf("availability with forged driver ID status = %d, want 400", forgedAvailability.Code)
+	}
+	offline := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"offline"}`, driverOneCookie, driverOneCSRF, "", true)
+	if offline.Code != http.StatusOK {
+		t.Fatalf("set offline status=%d body=%s", offline.Code, offline.Body.String())
+	}
+	offlineRequests := httptest.NewRecorder()
+	offlineRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests", nil)
+	offlineRequest.AddCookie(driverOneCookie)
+	router.ServeHTTP(offlineRequests, offlineRequest)
+	if offlineRequests.Code != http.StatusConflict {
+		t.Fatalf("offline driver requests status = %d, want 409", offlineRequests.Code)
+	}
+	available := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"available"}`, driverOneCookie, driverOneCSRF, "", true)
+	if available.Code != http.StatusOK {
+		t.Fatalf("set available status=%d body=%s", available.Code, available.Body.String())
+	}
+
+	create := performRideRequest(t, router, http.MethodPost, "/api/v1/rides", quoteRequestJSON(httpPickupID, httpDestinationID, "economy"), riderCookie, riderCSRF, "lifecycle-one", true)
+	if create.Code != http.StatusCreated {
+		t.Fatalf("create lifecycle ride status=%d body=%s", create.Code, create.Body.String())
+	}
+	var created rides.Ride
+	if err := json.Unmarshal(create.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode lifecycle ride: %v", err)
+	}
+	forgedDriver := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+created.ID+"/accept", `{"driver_id":"20000000-0000-4000-8000-000000000003"}`, driverOneCookie, driverOneCSRF, "", true)
+	if forgedDriver.Code != http.StatusBadRequest {
+		t.Fatalf("accept with forged driver ID body status = %d, want 400", forgedDriver.Code)
+	}
+	accepted := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+created.ID+"/accept", "", driverOneCookie, driverOneCSRF, "", true)
+	if accepted.Code != http.StatusOK {
+		t.Fatalf("accept ride status=%d body=%s", accepted.Code, accepted.Body.String())
+	}
+	var acceptedRide rides.Ride
+	if err := json.Unmarshal(accepted.Body.Bytes(), &acceptedRide); err != nil {
+		t.Fatalf("decode accepted ride: %v", err)
+	}
+	if acceptedRide.Status != "accepted" || acceptedRide.Assignment == nil || acceptedRide.Assignment.DriverID != "20000000-0000-4000-8000-000000000002" {
+		t.Fatalf("accepted ride used the wrong actor or state: %+v", acceptedRide)
+	}
+	replayAccept := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+created.ID+"/accept", "", driverOneCookie, driverOneCSRF, "", true)
+	if replayAccept.Code != http.StatusOK {
+		t.Fatalf("winning driver's repeat acceptance status = %d", replayAccept.Code)
+	}
+	competingAccept := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+created.ID+"/accept", "", driverTwoCookie, driverTwoCSRF, "", true)
+	if competingAccept.Code != http.StatusConflict {
+		t.Fatalf("competing driver's acceptance status = %d, want 409", competingAccept.Code)
+	}
+
+	assignment := httptest.NewRecorder()
+	assignmentRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/assignment", nil)
+	assignmentRequest.AddCookie(driverOneCookie)
+	router.ServeHTTP(assignment, assignmentRequest)
+	if assignment.Code != http.StatusOK || !strings.Contains(assignment.Body.String(), created.ID) {
+		t.Fatalf("current assignment status=%d body=%s", assignment.Code, assignment.Body.String())
+	}
+
+	cancelled := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+created.ID+"/cancel", "", riderCookie, riderCSRF, "", true)
+	if cancelled.Code != http.StatusOK || !strings.Contains(cancelled.Body.String(), `"status":"cancelled"`) {
+		t.Fatalf("cancel accepted ride status=%d body=%s", cancelled.Code, cancelled.Body.String())
+	}
+	replayCancel := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+created.ID+"/cancel", "", riderCookie, riderCSRF, "", true)
+	if replayCancel.Code != http.StatusOK {
+		t.Fatalf("repeat rider cancellation status = %d", replayCancel.Code)
+	}
+	completeCancelled := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+created.ID+"/complete", "", driverOneCookie, driverOneCSRF, "", true)
+	if completeCancelled.Code != http.StatusConflict {
+		t.Fatalf("completion after cancellation status = %d, want 409", completeCancelled.Code)
+	}
+
+	secondCreate := performRideRequest(t, router, http.MethodPost, "/api/v1/rides", quoteRequestJSON(httpPickupID, httpDestinationID, "comfort"), riderCookie, riderCSRF, "lifecycle-two", true)
+	if secondCreate.Code != http.StatusCreated {
+		t.Fatalf("create second lifecycle ride status=%d body=%s", secondCreate.Code, secondCreate.Body.String())
+	}
+	var secondRide rides.Ride
+	if err := json.Unmarshal(secondCreate.Body.Bytes(), &secondRide); err != nil {
+		t.Fatalf("decode second lifecycle ride: %v", err)
+	}
+	secondAccept := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+secondRide.ID+"/accept", "", driverOneCookie, driverOneCSRF, "", true)
+	if secondAccept.Code != http.StatusOK {
+		t.Fatalf("accept second ride after release status=%d body=%s", secondAccept.Code, secondAccept.Body.String())
+	}
+	completed := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+secondRide.ID+"/complete", "", driverOneCookie, driverOneCSRF, "", true)
+	if completed.Code != http.StatusOK || !strings.Contains(completed.Body.String(), `"status":"completed"`) {
+		t.Fatalf("complete ride status=%d body=%s", completed.Code, completed.Body.String())
+	}
+	replayComplete := performRideRequest(t, router, http.MethodPost, "/api/v1/rides/"+secondRide.ID+"/complete", "", driverOneCookie, driverOneCSRF, "", true)
+	if replayComplete.Code != http.StatusOK {
+		t.Fatalf("repeat driver completion status = %d", replayComplete.Code)
+	}
+}
+
 func newRideTestRouter(authService *auth.Service, repository *httpRideRepository) http.Handler {
 	router := chi.NewRouter()
 	router.Use(RequestID)
@@ -223,8 +360,9 @@ type httpRideRepository struct {
 		hash []byte
 		ride string
 	}
-	open     map[string]string
-	sequence int
+	open         map[string]string
+	driverStatus map[string]drivers.Availability
+	sequence     int
 }
 
 func newHTTPRideRepository() *httpRideRepository {
@@ -240,6 +378,10 @@ func newHTTPRideRepository() *httpRideRepository {
 			ride string
 		}),
 		open: make(map[string]string),
+		driverStatus: map[string]drivers.Availability{
+			"20000000-0000-4000-8000-000000000002": drivers.Available,
+			"20000000-0000-4000-8000-000000000003": drivers.Available,
+		},
 	}
 }
 
@@ -340,6 +482,125 @@ func (r *httpRideRepository) GetRide(_ context.Context, rideID, actorID, actorRo
 		return nil, rides.ErrRideNotFound
 	}
 	return &ride, nil
+}
+
+func (r *httpRideRepository) SetAvailability(_ context.Context, driverID string, status drivers.Availability) (drivers.Availability, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	current, ok := r.driverStatus[driverID]
+	if !ok {
+		return "", rides.ErrDriverNotFound
+	}
+	if current == drivers.Busy {
+		return "", rides.ErrDriverUnavailable
+	}
+	r.driverStatus[driverID] = status
+	return status, nil
+}
+
+func (r *httpRideRepository) ListDriverRequests(_ context.Context, driverID string, _ int, _ *rides.RequestCursor, _ int) (rides.DriverRequestPage, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.driverStatus[driverID]; !ok {
+		return rides.DriverRequestPage{}, rides.ErrDriverNotFound
+	}
+	if r.driverStatus[driverID] != drivers.Available {
+		return rides.DriverRequestPage{}, rides.ErrDriverUnavailable
+	}
+	return rides.DriverRequestPage{Requests: []rides.DriverRequest{}}, nil
+}
+
+func (r *httpRideRepository) CurrentAssignment(_ context.Context, driverID string) (*rides.AssignmentView, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, ride := range r.rides {
+		if ride.Assignment != nil && ride.Assignment.DriverID == driverID && ride.Assignment.Status == "active" {
+			copyOfRide := ride
+			return &rides.AssignmentView{Ride: &copyOfRide}, nil
+		}
+	}
+	return nil, nil
+}
+
+func (r *httpRideRepository) AcceptRide(_ context.Context, rideID, driverID string, _ int) (rides.Ride, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ride, ok := r.rides[rideID]
+	if !ok {
+		return rides.Ride{}, rides.ErrRideNotFound
+	}
+	if ride.Status == "accepted" && ride.Assignment != nil && ride.Assignment.DriverID == driverID && ride.Assignment.Status == "active" {
+		return ride, nil
+	}
+	if ride.Status != "requested" {
+		return rides.Ride{}, rides.ErrStateConflict
+	}
+	if r.driverStatus[driverID] != drivers.Available {
+		return rides.Ride{}, rides.ErrDriverUnavailable
+	}
+	for _, activeRide := range r.rides {
+		if activeRide.Assignment != nil && activeRide.Assignment.DriverID == driverID && activeRide.Assignment.Status == "active" {
+			return rides.Ride{}, rides.ErrDriverUnavailable
+		}
+	}
+	ride.Status = "accepted"
+	ride.Assignment = &rides.Assignment{
+		ID:                "50000000-0000-4000-8000-000000000001",
+		DriverID:          driverID,
+		DriverDisplayName: "Demo Driver One",
+		Status:            "active",
+		AssignedAt:        time.Now().UTC(),
+	}
+	ride.UpdatedAt = time.Now().UTC()
+	r.rides[rideID] = ride
+	r.driverStatus[driverID] = drivers.Busy
+	return ride, nil
+}
+
+func (r *httpRideRepository) CancelRide(_ context.Context, rideID, riderID string) (rides.Ride, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ride, ok := r.rides[rideID]
+	if !ok || ride.Rider.ID != riderID {
+		return rides.Ride{}, rides.ErrRideNotFound
+	}
+	if ride.Status == "cancelled" {
+		return ride, nil
+	}
+	if ride.Status != "requested" && ride.Status != "accepted" {
+		return rides.Ride{}, rides.ErrStateConflict
+	}
+	if ride.Assignment != nil && ride.Assignment.Status == "active" {
+		ride.Assignment.Status = "cancelled"
+		r.driverStatus[ride.Assignment.DriverID] = drivers.Available
+	}
+	ride.Status = "cancelled"
+	ride.UpdatedAt = time.Now().UTC()
+	r.rides[rideID] = ride
+	delete(r.open, riderID)
+	return ride, nil
+}
+
+func (r *httpRideRepository) CompleteRide(_ context.Context, rideID, driverID string) (rides.Ride, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ride, ok := r.rides[rideID]
+	if !ok || ride.Assignment == nil || ride.Assignment.DriverID != driverID {
+		return rides.Ride{}, rides.ErrRideNotFound
+	}
+	if ride.Status == "completed" && ride.Assignment.Status == "completed" {
+		return ride, nil
+	}
+	if ride.Status != "accepted" || ride.Assignment.Status != "active" {
+		return rides.Ride{}, rides.ErrStateConflict
+	}
+	ride.Status = "completed"
+	ride.Assignment.Status = "completed"
+	ride.UpdatedAt = time.Now().UTC()
+	r.rides[rideID] = ride
+	r.driverStatus[driverID] = drivers.Available
+	delete(r.open, ride.Rider.ID)
+	return ride, nil
 }
 
 func (r *httpRideRepository) createdCount() int {

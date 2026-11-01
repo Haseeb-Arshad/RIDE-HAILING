@@ -374,6 +374,8 @@ func mapWriteError(err error) error {
 			return ErrOpenRideConflict
 		case "idempotency_keys_pkey":
 			return ErrIdempotencyConflict
+		case "ride_assignments_ride_id_key", "ride_assignments_one_active_per_driver_uidx":
+			return ErrStateConflict
 		}
 	}
 	return unavailable(err)

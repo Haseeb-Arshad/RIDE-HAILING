@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/drivers"
 	"github.com/haseeb-arshad/ride-hailing/apps/api/internal/pricing"
 )
 
@@ -86,6 +88,55 @@ func TestRideReadRejectsMalformedIDsWithoutStorage(t *testing.T) {
 	}
 }
 
+func TestRequestCursorRoundTripsAndRejectsMalformedValues(t *testing.T) {
+	createdAt := time.Date(2026, 11, 1, 12, 30, 0, 123_000_000, time.FixedZone("PKT", 5*60*60))
+	rideID := "40000000-0000-4000-8000-000000000001"
+	encoded := encodeRequestCursor(createdAt, rideID)
+	cursor, err := decodeRequestCursor(encoded)
+	if err != nil {
+		t.Fatalf("decode encoded request cursor: %v", err)
+	}
+	if cursor.RideID != rideID || !cursor.CreatedAt.Equal(createdAt) || cursor.CreatedAt.Location() != time.UTC {
+		t.Fatalf("decoded cursor = %+v, want UTC timestamp and ride ID %s", cursor, rideID)
+	}
+	if _, err := decodeRequestCursor("not-base64"); err == nil {
+		t.Fatal("malformed cursor decoded successfully")
+	}
+	tooLong := make([]byte, 513)
+	for index := range tooLong {
+		tooLong[index] = 'a'
+	}
+	if _, err := decodeRequestCursor(string(tooLong)); err == nil {
+		t.Fatal("oversized cursor decoded successfully")
+	}
+}
+
+func TestParseRequestLimit(t *testing.T) {
+	for _, test := range []struct {
+		value   string
+		want    int
+		wantErr bool
+	}{
+		{value: "", want: 25},
+		{value: "1", want: 1},
+		{value: "50", want: 50},
+		{value: "0", wantErr: true},
+		{value: "51", wantErr: true},
+		{value: "many", wantErr: true},
+	} {
+		got, err := ParseRequestLimit(test.value)
+		if test.wantErr {
+			if err == nil {
+				t.Errorf("ParseRequestLimit(%q) succeeded, want validation error", test.value)
+			}
+			continue
+		}
+		if err != nil || got != test.want {
+			t.Errorf("ParseRequestLimit(%q) = %d, %v; want %d", test.value, got, err, test.want)
+		}
+	}
+}
+
 type fakeRepository struct {
 	quoteRequest  QuoteRequest
 	quoteRadiusKM int
@@ -121,4 +172,28 @@ func (f *fakeRepository) CurrentRide(context.Context, string) (*Ride, error) {
 func (f *fakeRepository) GetRide(context.Context, string, string, string) (*Ride, error) {
 	f.getRideCalls++
 	return nil, nil
+}
+
+func (f *fakeRepository) SetAvailability(_ context.Context, _ string, status drivers.Availability) (drivers.Availability, error) {
+	return status, nil
+}
+
+func (f *fakeRepository) ListDriverRequests(_ context.Context, _ string, _ int, _ *RequestCursor, _ int) (DriverRequestPage, error) {
+	return DriverRequestPage{Requests: []DriverRequest{}}, nil
+}
+
+func (f *fakeRepository) CurrentAssignment(context.Context, string) (*AssignmentView, error) {
+	return nil, nil
+}
+
+func (f *fakeRepository) AcceptRide(context.Context, string, string, int) (Ride, error) {
+	return Ride{}, ErrRideNotFound
+}
+
+func (f *fakeRepository) CancelRide(context.Context, string, string) (Ride, error) {
+	return Ride{}, ErrRideNotFound
+}
+
+func (f *fakeRepository) CompleteRide(context.Context, string, string) (Ride, error) {
+	return Ride{}, ErrRideNotFound
 }

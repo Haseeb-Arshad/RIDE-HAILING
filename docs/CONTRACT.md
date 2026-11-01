@@ -1,6 +1,6 @@
 # API and domain contract
 
-**Status:** Implementation source of truth. Stage 3 schema/seed, Stage 4 API authentication, and Stage 5 location/quote/ride routes are implemented locally. The migration, seed, and all database-backed checks await the supplied Supabase connection. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
+**Status:** Implementation source of truth. Stage 3 schema/seed, Stage 4 API authentication, Stage 5 location/quote/ride routes, and Stage 6 driver/assignment/lifecycle routes are implemented locally. The migration, seed, and all database-backed checks await the supplied Supabase connection. Update this document and `docs/openapi.yaml` together if a correctness-driven decision changes.
 
 ## 1. Domain vocabulary
 
@@ -126,5 +126,5 @@ Quote response:
 ## 8. Remaining gates
 
 - Reconcile the original five-page assessment, especially any evaluation criteria not reproduced in the supplied execution plan.
-- Apply the migration, seed the demo accounts, and run the schema, session, ride, idempotency, and concurrency integration checks after the user supplies the Supabase connection string; until then, database-backed behavior is not verified.
-- Build the rider/driver web experience and implement the assignment and ride lifecycle stages after this database gate is verified.
+- Apply the migration, seed the demo accounts, and run the schema, session, ride, idempotency, assignment, release, and concurrency integration checks after the user supplies the Supabase connection string; until then, database-backed behavior is not verified.
+- Build the rider/driver web experience after the database gate is verified.
