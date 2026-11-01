@@ -27,7 +27,7 @@ const (
 func TestRiderQuoteAndIdempotentRideCreationRoutes(t *testing.T) {
 	repository := newHTTPRideRepository()
 	authRepository := newHTTPAuthRepository(t)
-	router := newRideTestRouter(auth.NewService(authRepository), repository)
+	router := newRideTestRouter(newHTTPAuthService(authRepository), repository)
 	riderCookie, csrfToken := loginForRideTest(t, router, "rider@example.test")
 
 	quoteResponse := performRideRequest(t, router, http.MethodPost, "/api/v1/quotes", quoteRequestJSON(httpPickupID, httpDestinationID, "economy"), riderCookie, csrfToken, "", true)
@@ -81,16 +81,16 @@ func TestRiderQuoteAndIdempotentRideCreationRoutes(t *testing.T) {
 
 	current := httptest.NewRecorder()
 	currentRequest := httptest.NewRequest(http.MethodGet, "/api/v1/rides/current", nil)
-	currentRequest.AddCookie(riderCookie)
+	currentRequest.Header.Set("Authorization", "Bearer "+riderCookie)
 	router.ServeHTTP(current, currentRequest)
 	if current.Code != http.StatusOK || !strings.Contains(current.Body.String(), firstRide.ID) {
 		t.Fatalf("current ride response status=%d body=%s", current.Code, current.Body.String())
 	}
 }
 
-func TestRideRoutesEnforceRoleCSRFAndStrictRequestFields(t *testing.T) {
+func TestRideRoutesEnforceBearerRoleAndStrictRequestFields(t *testing.T) {
 	repository := newHTTPRideRepository()
-	router := newRideTestRouter(auth.NewService(newHTTPAuthRepository(t)), repository)
+	router := newRideTestRouter(newHTTPAuthService(newHTTPAuthRepository(t)), repository)
 	riderCookie, csrfToken := loginForRideTest(t, router, "rider@example.test")
 	driverCookie, driverCSRF := loginForRideTest(t, router, "driver.one@example.test")
 
@@ -102,7 +102,7 @@ func TestRideRoutesEnforceRoleCSRFAndStrictRequestFields(t *testing.T) {
 
 	locations := httptest.NewRecorder()
 	locationRequest := httptest.NewRequest(http.MethodGet, "/api/v1/locations", nil)
-	locationRequest.AddCookie(driverCookie)
+	locationRequest.Header.Set("Authorization", "Bearer "+driverCookie)
 	router.ServeHTTP(locations, locationRequest)
 	if locations.Code != http.StatusOK || !strings.Contains(locations.Body.String(), "Liberty Market") {
 		t.Fatalf("authenticated locations status=%d body=%s", locations.Code, locations.Body.String())
@@ -113,9 +113,9 @@ func TestRideRoutesEnforceRoleCSRFAndStrictRequestFields(t *testing.T) {
 		t.Fatalf("driver quote status = %d, want 403", driverQuote.Code)
 	}
 
-	missingCSRF := performRideRequest(t, router, http.MethodPost, "/api/v1/quotes", quoteRequestJSON(httpPickupID, httpDestinationID, "economy"), riderCookie, "", "", false)
-	if missingCSRF.Code != http.StatusForbidden {
-		t.Fatalf("missing CSRF quote status = %d, want 403", missingCSRF.Code)
+	missingToken := performRideRequest(t, router, http.MethodPost, "/api/v1/quotes", quoteRequestJSON(httpPickupID, httpDestinationID, "economy"), "", "", "", false)
+	if missingToken.Code != http.StatusUnauthorized {
+		t.Fatalf("missing bearer token quote status = %d, want 401", missingToken.Code)
 	}
 
 	extraAuthorityField := `{"pickup_location_id":"` + httpPickupID + `","destination_location_id":"` + httpDestinationID + `","category":"economy","rider_id":"20000000-0000-4000-8000-000000000002"}`
@@ -143,7 +143,10 @@ func TestRideReadConcealsOtherRidersRide(t *testing.T) {
 	other.Email = "other@example.test"
 	other.DisplayName = "Other Rider"
 	authRepository.users[other.Email] = other
-	router := newRideTestRouter(auth.NewService(authRepository), repository)
+	otherSupabaseID := "30000000-0000-4000-8000-000000000004"
+	authRepository.supabaseIDs[other.Email] = otherSupabaseID
+	authRepository.tokenSubjects[other.Email] = otherSupabaseID
+	router := newRideTestRouter(newHTTPAuthService(authRepository), repository)
 	riderCookie, csrfToken := loginForRideTest(t, router, "rider@example.test")
 	created := performRideRequest(t, router, http.MethodPost, "/api/v1/rides", quoteRequestJSON(httpPickupID, httpDestinationID, "economy"), riderCookie, csrfToken, "read-ride", true)
 	if created.Code != http.StatusCreated {
@@ -156,7 +159,7 @@ func TestRideReadConcealsOtherRidersRide(t *testing.T) {
 
 	otherCookie, _ := loginForRideTest(t, router, "other@example.test")
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/rides/"+ride.ID, nil)
-	request.AddCookie(otherCookie)
+	request.Header.Set("Authorization", "Bearer "+otherCookie)
 	response := httptest.NewRecorder()
 	router.ServeHTTP(response, request)
 	if response.Code != http.StatusNotFound {
@@ -166,7 +169,7 @@ func TestRideReadConcealsOtherRidersRide(t *testing.T) {
 
 func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.T) {
 	repository := newHTTPRideRepository()
-	router := newRideTestRouter(auth.NewService(newHTTPAuthRepository(t)), repository)
+	router := newRideTestRouter(newHTTPAuthService(newHTTPAuthRepository(t)), repository)
 	riderCookie, riderCSRF := loginForRideTest(t, router, "rider@example.test")
 	driverOneCookie, driverOneCSRF := loginForRideTest(t, router, "driver.one@example.test")
 	driverTwoCookie, driverTwoCSRF := loginForRideTest(t, router, "driver.two@example.test")
@@ -182,21 +185,21 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 
 	requests := httptest.NewRecorder()
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests", nil)
-	request.AddCookie(driverOneCookie)
+	request.Header.Set("Authorization", "Bearer "+driverOneCookie)
 	router.ServeHTTP(requests, request)
 	if requests.Code != http.StatusOK || !strings.Contains(requests.Body.String(), `"requests":[]`) {
 		t.Fatalf("empty driver request list status=%d body=%s", requests.Code, requests.Body.String())
 	}
 	badLimit := httptest.NewRecorder()
 	badLimitRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests?limit=51", nil)
-	badLimitRequest.AddCookie(driverOneCookie)
+	badLimitRequest.Header.Set("Authorization", "Bearer "+driverOneCookie)
 	router.ServeHTTP(badLimit, badLimitRequest)
 	if badLimit.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("out-of-range driver request limit status = %d, want 422", badLimit.Code)
 	}
 	badCursor := httptest.NewRecorder()
 	badCursorRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests?cursor=not-base64", nil)
-	badCursorRequest.AddCookie(driverOneCookie)
+	badCursorRequest.Header.Set("Authorization", "Bearer "+driverOneCookie)
 	router.ServeHTTP(badCursor, badCursorRequest)
 	if badCursor.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("malformed driver request cursor status = %d, want 422", badCursor.Code)
@@ -206,9 +209,9 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 	if riderAvailability.Code != http.StatusForbidden {
 		t.Fatalf("rider availability status = %d, want 403", riderAvailability.Code)
 	}
-	noCSRF := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"offline"}`, driverOneCookie, "", "", false)
-	if noCSRF.Code != http.StatusForbidden {
-		t.Fatalf("availability without CSRF status = %d, want 403", noCSRF.Code)
+	noToken := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"offline"}`, "", "", "", false)
+	if noToken.Code != http.StatusUnauthorized {
+		t.Fatalf("availability without bearer token status = %d, want 401", noToken.Code)
 	}
 	invalidAvailability := performRideRequest(t, router, http.MethodPatch, "/api/v1/drivers/me/availability", `{"status":"busy"}`, driverOneCookie, driverOneCSRF, "", true)
 	if invalidAvailability.Code != http.StatusUnprocessableEntity {
@@ -228,7 +231,7 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 	}
 	offlineRequests := httptest.NewRecorder()
 	offlineRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/requests", nil)
-	offlineRequest.AddCookie(driverOneCookie)
+	offlineRequest.Header.Set("Authorization", "Bearer "+driverOneCookie)
 	router.ServeHTTP(offlineRequests, offlineRequest)
 	if offlineRequests.Code != http.StatusConflict {
 		t.Fatalf("offline driver requests status = %d, want 409", offlineRequests.Code)
@@ -276,7 +279,7 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 
 	assignment := httptest.NewRecorder()
 	assignmentRequest := httptest.NewRequest(http.MethodGet, "/api/v1/driver/assignment", nil)
-	assignmentRequest.AddCookie(driverOneCookie)
+	assignmentRequest.Header.Set("Authorization", "Bearer "+driverOneCookie)
 	router.ServeHTTP(assignment, assignmentRequest)
 	if assignment.Code != http.StatusOK || !strings.Contains(assignment.Body.String(), created.ID) {
 		t.Fatalf("current assignment status=%d body=%s", assignment.Code, assignment.Body.String())
@@ -324,42 +327,27 @@ func TestDriverAvailabilityAcceptanceCancellationAndCompletionRoutes(t *testing.
 func newRideTestRouter(authService *auth.Service, repository *httpRideRepository) http.Handler {
 	router := chi.NewRouter()
 	router.Use(RequestID)
-	handlers := newAuthHandlers(authService, testAppOrigin, false)
+	handlers := newAuthHandlers(authService, testAppOrigin)
 	handlers.registerRoutes(router)
 	registerRideRoutes(router, handlers, rides.NewService(repository, pricing.DefaultMatchRadiusKM))
 	return router
 }
 
-func loginForRideTest(t *testing.T, router http.Handler, email string) (*http.Cookie, string) {
+func loginForRideTest(t *testing.T, _ http.Handler, email string) (string, string) {
 	t.Helper()
-	response := performLogin(t, router, email, "correct horse battery staple")
-	if response.Code != http.StatusOK {
-		t.Fatalf("login for %s status=%d body=%s", email, response.Code, response.Body.String())
-	}
-	cookies := response.Result().Cookies()
-	if len(cookies) != 1 {
-		t.Fatalf("login for %s returned %d cookies", email, len(cookies))
-	}
-	var body sessionResponse
-	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
-		t.Fatalf("decode %s login response: %v", email, err)
-	}
-	return cookies[0], body.CSRFToken
+	return email, ""
 }
 
-func performRideRequest(t *testing.T, router http.Handler, method, path, body string, cookie *http.Cookie, csrfToken, idempotencyKey string, includeCSRF bool) *httptest.ResponseRecorder {
+func performRideRequest(t *testing.T, router http.Handler, method, path, body string, token, _ string, idempotencyKey string, _ bool) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, path, bytes.NewBufferString(body))
 	if body != "" {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	if cookie != nil {
-		request.AddCookie(cookie)
+	if token != "" {
+		request.Header.Set("Authorization", "Bearer "+token)
 	}
 	request.Header.Set("Origin", testAppOrigin)
-	if includeCSRF {
-		request.Header.Set("X-CSRF-Token", csrfToken)
-	}
 	if idempotencyKey != "" {
 		request.Header.Set("Idempotency-Key", idempotencyKey)
 	}

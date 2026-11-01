@@ -22,9 +22,9 @@ One Go service and one PostgreSQL database are sufficient for the bounded demo. 
 
 Poll active ride and driver views every 2–3 seconds, stop at terminal states, and avoid unnecessary requests for hidden tabs. This is easy to reason about and sufficient for a two-browser assessment. It trades update latency and request volume for a small operational surface; live presence and push delivery are future work.
 
-## ADR 6 — Seeded identity and locations keep the scope testable
+## ADR 6 — Seeded Auth profiles and locations keep the scope testable
 
-Seed one rider and two driver accounts with hashed passwords and fixed Lahore demo locations/positions. Do not add signup, OAuth, map providers, or GPS collection. These fixtures enable deterministic authorization, matching, and race tests, but they are not a production identity or location model.
+Create one rider and two driver email/password accounts in Supabase Auth, then link them to application profiles by Auth user ID and normalized email. Keep Lahore locations and driver positions fixed. Do not add public signup, OAuth providers, map services, or GPS collection. The profile role remains controlled by PostgreSQL, not editable Auth user metadata.
 
 ## ADR 7 — Estimates are transparent demo calculations
 
@@ -38,9 +38,9 @@ Store ride-hailing data in a dedicated `ride_hailing` schema and omit it from bo
 
 Require an idempotency key per rider and fingerprint the normalized request. Replays identify the same ride; a changed request under the same key is a conflict. A separate unique open-ride constraint rejects a second booking even when a client invents a new key. The trade-off is a small amount of idempotency state and explicit conflict handling in the UI.
 
-## ADR 10 — Store opaque sessions in PostgreSQL
+## ADR 10 — Supabase Auth owns user sessions
 
-Give each login a random 32-byte cookie token and store only its SHA-256 hash with expiry, revocation, and a hash of a session-bound CSRF token. Resolve identity from the database on every request so logout and expiry take effect across API restarts. The trade-off is a database lookup on authenticated requests; it keeps session revocation immediate without a separate cache or token-signing key.
+Supabase Auth owns credentials, refresh sessions, and sign-in/out. The Next.js app uses `@supabase/ssr` and refreshes cookies in `src/proxy.ts`. The browser sends an explicit bearer access token to Go; Go verifies ES256/RS256 signatures with public JWKS keys and maps the verified subject to an application profile in PostgreSQL. Roles stay in the profile table, not user metadata. Writes keep strict Origin checks and do not need CSRF tokens because the browser does not attach bearer credentials automatically. Access tokens can remain valid until their expiry even after local sign-out; strict immediate session revocation is not implemented.
 
 ## ADR 11 — Serialize each rider's idempotent booking attempts
 

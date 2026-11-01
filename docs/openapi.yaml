@@ -3,21 +3,29 @@ info:
   title: Lahore Ride Hailing API
   version: 0.1.0
   description: >-
-    Contract draft for the assessment demo. The Go API is authoritative for
+    Contract for the assessment demo. The Go API is authoritative for
     identity, fare, eligibility, assignment, and ride state. Estimates use
-    fixed Lahore demo coordinates and are approximate.
+    fixed Lahore demo coordinates and are approximate. Supabase Auth issues
+    access tokens; the Go API validates asymmetric JWTs and reads role/profile
+    data from PostgreSQL.
 servers:
   - url: http://127.0.0.1:8080
     description: Local Go API; browsers normally use the same-origin Next.js rewrite.
 tags:
   - name: Health
+    description: Process liveness and PostgreSQL readiness probes.
   - name: Authentication
+    description: Current application profile resolved from a verified Supabase access token.
   - name: Locations and quotes
+    description: Seeded Lahore locations and server-calculated estimates.
   - name: Rider rides
+    description: Rider-owned quote, booking, status, and cancellation operations.
   - name: Driver
+    description: Driver availability, eligible requests, and assigned ride lifecycle operations.
 paths:
   /healthz:
     get:
+      operationId: getLiveness
       tags: [Health]
       summary: Liveness probe
       security: []
@@ -29,6 +37,7 @@ paths:
               schema: { $ref: '#/components/schemas/Probe' }
   /readyz:
     get:
+      operationId: getReadiness
       tags: [Health]
       summary: Database readiness probe
       security: []
@@ -43,72 +52,29 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
-  /api/v1/auth/login:
-    post:
-      tags: [Authentication]
-      summary: Start a seeded demo user session
-      description: Guest route. Requires an allowed Origin. Sets a seven-day HttpOnly, SameSite=Lax `ride_session` cookie; never returns the session token in JSON. The response includes the session-bound CSRF token.
-      security: []
-      parameters:
-        - $ref: '#/components/parameters/OriginHeader'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/LoginRequest' }
-            example: { email: rider@example.test, password: configured-demo-password }
-      responses:
-        '200':
-          description: Session created.
-          headers:
-            Set-Cookie:
-              schema: { type: string }
-              description: HttpOnly, Path=/, SameSite=Lax, seven-day cookie; Secure when configured.
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/SessionResponse' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '422': { $ref: '#/components/responses/ValidationError' }
-        '500': { $ref: '#/components/responses/InternalError' }
-        '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/auth/me:
     get:
+      operationId: getCurrentUser
       tags: [Authentication]
-      summary: Read the current user and session CSRF token
-      security: [{ SessionCookie: [] }]
+      summary: Resolve the application profile for the current Supabase user
+      description: Requires a valid Supabase Auth access token. App role and display name are loaded from the ride_hailing profile row, never from user metadata.
+      security: [{ SupabaseBearer: [] }]
       responses:
         '200':
           description: Current authenticated identity.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/SessionResponse' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '500': { $ref: '#/components/responses/InternalError' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-        '503': { $ref: '#/components/responses/Unavailable' }
-  /api/v1/auth/logout:
-    post:
-      tags: [Authentication]
-      summary: Revoke the current session
-      description: Authenticated write; requires matching Origin and X-CSRF-Token. Revokes the session and clears `ride_session`.
-      security: [{ SessionCookie: [] }]
-      parameters:
-        - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
-      responses:
-        '204': { description: Session revoked and cookie cleared. }
+              schema: { $ref: '#/components/schemas/CurrentUserResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/locations:
     get:
+      operationId: listLocations
       tags: [Locations and quotes]
       summary: List seeded Lahore locations
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       responses:
         '200':
           description: Seeded locations available to authenticated users.
@@ -126,24 +92,34 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/quotes:
     post:
+      operationId: createQuote
       tags: [Locations and quotes]
       summary: Calculate a server-side approximate fare and pickup ETA
       description: Rider only. Does not create a ride. Quote is illustrative and is recomputed on ride creation.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/QuoteRequest' }
+            example:
+              pickup_location_id: 10000000-0000-4000-8000-000000000001
+              destination_location_id: 10000000-0000-4000-8000-000000000002
+              category: economy
       responses:
         '200':
           description: Approximate quote.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Quote' }
+              example:
+                estimated_fare_paisa: 23676
+                estimated_distance_meters: 1446
+                pickup_eta_minutes: 2
+                currency: PKR
+                approximate: true
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '400': { $ref: '#/components/responses/BadRequest' }
@@ -153,16 +129,16 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides:
     post:
+      operationId: createRide
       tags: [Rider rides]
       summary: Create a ride
       description: >-
         Rider only. The server recomputes the quote. Requires a rider-scoped
         Idempotency-Key. Same key and normalized request returns the same ride
         with its current state (200); changed request under that key is 409.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
         - name: Idempotency-Key
           in: header
           required: true
@@ -173,17 +149,71 @@ paths:
         content:
           application/json:
             schema: { $ref: '#/components/schemas/QuoteRequest' }
+            example:
+              pickup_location_id: 10000000-0000-4000-8000-000000000001
+              destination_location_id: 10000000-0000-4000-8000-000000000002
+              category: economy
       responses:
         '201':
           description: Ride created.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Ride' }
+              example:
+                id: 40000000-0000-4000-8000-000000000001
+                rider:
+                  id: 20000000-0000-4000-8000-000000000001
+                  display_name: Demo Rider
+                pickup:
+                  id: 10000000-0000-4000-8000-000000000001
+                  name: Liberty Market
+                  area: Gulberg III
+                  city: Lahore
+                destination:
+                  id: 10000000-0000-4000-8000-000000000002
+                  name: MM Alam Road
+                  area: Gulberg III
+                  city: Lahore
+                category: economy
+                estimated_fare_paisa: 23676
+                estimated_distance_meters: 1446
+                pickup_eta_minutes: 2
+                currency: PKR
+                approximate: true
+                status: requested
+                assignment: null
+                created_at: '2026-11-01T12:00:00Z'
+                updated_at: '2026-11-01T12:00:00Z'
         '200':
           description: Idempotent replay of the same ride; representation reflects current persisted state.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Ride' }
+              example:
+                id: 40000000-0000-4000-8000-000000000001
+                rider:
+                  id: 20000000-0000-4000-8000-000000000001
+                  display_name: Demo Rider
+                pickup:
+                  id: 10000000-0000-4000-8000-000000000001
+                  name: Liberty Market
+                  area: Gulberg III
+                  city: Lahore
+                destination:
+                  id: 10000000-0000-4000-8000-000000000002
+                  name: MM Alam Road
+                  area: Gulberg III
+                  city: Lahore
+                category: economy
+                estimated_fare_paisa: 23676
+                estimated_distance_meters: 1446
+                pickup_eta_minutes: 2
+                currency: PKR
+                approximate: true
+                status: requested
+                assignment: null
+                created_at: '2026-11-01T12:00:00Z'
+                updated_at: '2026-11-01T12:00:00Z'
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -194,10 +224,11 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides/current:
     get:
+      operationId: getCurrentRide
       tags: [Rider rides]
       summary: Get the rider's current open ride
       description: Rider only; returns a null ride when there is no requested or accepted ride.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       responses:
         '200':
           description: Current open ride, if any.
@@ -217,10 +248,11 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides/{id}:
     get:
+      operationId: getRide
       tags: [Rider rides]
       summary: Read an authorized ride
       description: Owning rider or assigned driver only; other users receive a concealed 404.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/RideId'
       responses:
@@ -236,14 +268,14 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides/{id}/accept:
     post:
+      operationId: acceptRide
       tags: [Driver]
       summary: Atomically accept an eligible requested ride
       description: Eligible available driver only. Locks ride then driver and commits ride, assignment, and driver status together. Repeated accept by the winning driver returns current ride; another winner or ineligibility is 409.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/RideId'
         - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '200':
           description: Ride accepted or already assigned to this driver.
@@ -260,14 +292,14 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides/{id}/cancel:
     post:
+      operationId: cancelRide
       tags: [Rider rides]
       summary: Cancel the owning rider's requested or accepted ride
       description: An accepted ride releases its driver atomically. Repeating cancellation after cancellation returns the current ride.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/RideId'
         - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '200':
           description: Ride cancelled or already cancelled by this rider.
@@ -284,14 +316,14 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/rides/{id}/complete:
     post:
+      operationId: completeRide
       tags: [Driver]
       summary: Complete a ride assigned to the current driver
       description: Assigned driver only. Closes the assignment and makes the driver available atomically. Repeating completion after completion returns the current ride.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/RideId'
         - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
       responses:
         '200':
           description: Ride completed or already completed by this driver.
@@ -308,10 +340,11 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/driver/requests:
     get:
+      operationId: listEligibleDriverRequests
       tags: [Driver]
       summary: List eligible open ride requests
       description: Driver only. Oldest first, bounded page; contains no rider identity or contact details.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       parameters:
         - name: limit
           in: query
@@ -343,9 +376,10 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/driver/assignment:
     get:
+      operationId: getDriverAssignment
       tags: [Driver]
       summary: Read the current driver's active assignment
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       responses:
         '200':
           description: Active assignment or null.
@@ -365,10 +399,11 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
   /api/v1/drivers/me/availability:
     get:
+      operationId: getDriverAvailability
       tags: [Driver]
       summary: Read the current driver's availability
       description: Driver only. Returns the persisted status so the dashboard can recover after refresh.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       responses:
         '200':
           description: Current driver status.
@@ -385,13 +420,13 @@ paths:
         '500': { $ref: '#/components/responses/InternalError' }
         '503': { $ref: '#/components/responses/Unavailable' }
     patch:
+      operationId: setDriverAvailability
       tags: [Driver]
       summary: Set driver availability
       description: Driver only; `busy` is system-managed. A driver with an active assignment cannot change availability.
-      security: [{ SessionCookie: [] }]
+      security: [{ SupabaseBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/OriginHeader'
-        - $ref: '#/components/parameters/CsrfHeader'
       requestBody:
         required: true
         content:
@@ -422,11 +457,11 @@ paths:
         '503': { $ref: '#/components/responses/Unavailable' }
 components:
   securitySchemes:
-    SessionCookie:
-      type: apiKey
-      in: cookie
-      name: ride_session
-      description: Opaque HttpOnly server session cookie. Never read it from browser JavaScript.
+    SupabaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Supabase Auth access token. The Go API validates the signature, issuer, audience, expiry, and subject against the project's public JWKS.
   parameters:
     OriginHeader:
       name: Origin
@@ -434,12 +469,6 @@ components:
       required: true
       description: Must exactly match the configured application origin for unsafe requests.
       schema: { type: string, format: uri }
-    CsrfHeader:
-      name: X-CSRF-Token
-      in: header
-      required: true
-      description: Session-bound value returned by auth/login or auth/me.
-      schema: { type: string, minLength: 1 }
     RideId:
       name: id
       in: path
@@ -450,10 +479,10 @@ components:
       description: Malformed JSON or request syntax.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     Unauthorized:
-      description: Missing/expired session or invalid credentials.
+      description: Missing, invalid, or expired Supabase access token.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     Forbidden:
-      description: Role, Origin, or CSRF check failed.
+      description: The profile is not enabled for the demo, the role is insufficient, or the request Origin is not allowed.
       content: { application/json: { schema: { $ref: '#/components/schemas/ErrorEnvelope' } } }
     NotFound:
       description: Unknown resource or concealed non-owned ride.
@@ -491,13 +520,6 @@ components:
     Category:
       type: string
       enum: [economy, comfort]
-    LoginRequest:
-      type: object
-      additionalProperties: false
-      required: [email, password]
-      properties:
-        email: { type: string, format: email }
-        password: { type: string, minLength: 1, maxLength: 72, writeOnly: true }
     User:
       type: object
       required: [id, email, display_name, role]
@@ -506,12 +528,11 @@ components:
         email: { type: string, format: email }
         display_name: { type: string }
         role: { $ref: '#/components/schemas/Role' }
-    SessionResponse:
+    CurrentUserResponse:
       type: object
-      required: [user, csrf_token]
+      required: [user]
       properties:
         user: { $ref: '#/components/schemas/User' }
-        csrf_token: { type: string, description: Session-bound token for authenticated browser writes. }
     Location:
       type: object
       required: [id, name, area, city]

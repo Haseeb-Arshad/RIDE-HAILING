@@ -12,7 +12,6 @@ export type User = {
 
 export type SessionResponse = {
   user: User;
-  csrf_token: string;
 };
 
 export type Location = {
@@ -102,17 +101,21 @@ export class ApiError extends Error {
 type RequestOptions = {
   method?: "GET" | "POST" | "PATCH";
   body?: unknown;
-  csrfToken?: string;
   idempotencyKey?: string;
   signal?: AbortSignal;
   timeoutMs?: number;
-  public?: boolean;
 };
+
+let accessToken: string | null = null;
+
+export function setApiAccessToken(token: string | null) {
+  accessToken = token;
+}
 
 async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = new Headers({ Accept: "application/json" });
   if (options.body !== undefined) headers.set("Content-Type", "application/json");
-  if (options.csrfToken) headers.set("X-CSRF-Token", options.csrfToken);
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
   if (options.idempotencyKey) headers.set("Idempotency-Key", options.idempotencyKey);
 
   const timeoutController = new AbortController();
@@ -129,7 +132,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
       method: options.method ?? "GET",
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
-      credentials: "include",
+      credentials: "omit",
       cache: "no-store",
       signal: timeoutController.signal,
     });
@@ -157,7 +160,7 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
     const error = payload as ApiErrorBody | undefined;
     const code = error?.error?.code ?? "request_failed";
     const message = error?.error?.message ?? `The request failed (${response.status}).`;
-    if (response.status === 401 && !options.public && typeof window !== "undefined") {
+    if (response.status === 401 && typeof window !== "undefined") {
       window.dispatchEvent(new Event("ride:unauthorized"));
     }
     throw new ApiError(response.status, code, message, error?.error?.request_id);
@@ -168,33 +171,23 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
 
 export const api = {
   me: (signal?: AbortSignal) => request<SessionResponse>("/api/v1/auth/me", { signal }),
-  login: (email: string, password: string) =>
-    request<SessionResponse>("/api/v1/auth/login", {
-      method: "POST",
-      body: { email, password },
-      public: true,
-    }),
-  logout: (csrfToken: string) =>
-    request<void>("/api/v1/auth/logout", { method: "POST", csrfToken }),
   locations: (signal?: AbortSignal) =>
     request<{ locations: Location[] }>("/api/v1/locations", { signal }),
-  quote: (input: QuoteInput, csrfToken: string, signal?: AbortSignal) =>
-    request<Quote>("/api/v1/quotes", { method: "POST", body: input, csrfToken, signal }),
-  createRide: (input: QuoteInput, csrfToken: string, idempotencyKey: string) =>
+  quote: (input: QuoteInput, signal?: AbortSignal) =>
+    request<Quote>("/api/v1/quotes", { method: "POST", body: input, signal }),
+  createRide: (input: QuoteInput, idempotencyKey: string) =>
     request<Ride>("/api/v1/rides", {
       method: "POST",
       body: input,
-      csrfToken,
       idempotencyKey,
     }),
   currentRide: (signal?: AbortSignal) =>
     request<{ ride: Ride | null }>("/api/v1/rides/current", { signal }),
   ride: (id: string, signal?: AbortSignal) =>
     request<Ride>(`/api/v1/rides/${encodeURIComponent(id)}`, { signal }),
-  cancelRide: (id: string, csrfToken: string) =>
+  cancelRide: (id: string) =>
     request<Ride>(`/api/v1/rides/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
-      csrfToken,
     }),
   driverRequests: (cursor?: string, signal?: AbortSignal) => {
     const query = new URLSearchParams({ limit: "25" });
@@ -205,20 +198,17 @@ export const api = {
     request<{ assignment: { ride: Ride } | null }>("/api/v1/driver/assignment", { signal }),
   driverAvailability: (signal?: AbortSignal) =>
     request<{ status: DriverStatus }>("/api/v1/drivers/me/availability", { signal }),
-  setDriverAvailability: (status: "offline" | "available", csrfToken: string) =>
+  setDriverAvailability: (status: "offline" | "available") =>
     request<{ status: DriverStatus }>("/api/v1/drivers/me/availability", {
       method: "PATCH",
       body: { status },
-      csrfToken,
     }),
-  acceptRide: (id: string, csrfToken: string) =>
+  acceptRide: (id: string) =>
     request<Ride>(`/api/v1/rides/${encodeURIComponent(id)}/accept`, {
       method: "POST",
-      csrfToken,
     }),
-  completeRide: (id: string, csrfToken: string) =>
+  completeRide: (id: string) =>
     request<Ride>(`/api/v1/rides/${encodeURIComponent(id)}/complete`, {
       method: "POST",
-      csrfToken,
     }),
 };

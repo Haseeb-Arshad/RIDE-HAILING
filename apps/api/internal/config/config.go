@@ -14,14 +14,13 @@ import (
 )
 
 type Config struct {
-	Port                string
-	DatabaseURL         string
-	AppOrigin           string
-	SessionCookieSecure bool
-	DemoSeedEnabled     bool
-	DemoAccountPassword string
-	MatchRadiusKM       int
-	RequestTimeout      time.Duration
+	Port            string
+	DatabaseURL     string
+	SupabaseURL     string
+	AppOrigin       string
+	DemoSeedEnabled bool
+	MatchRadiusKM   int
+	RequestTimeout  time.Duration
 }
 
 func Load() (Config, error) {
@@ -47,10 +46,14 @@ func Load() (Config, error) {
 		}
 	}
 
-	secure, err := boolValue("SESSION_COOKIE_SECURE", false)
-	if err != nil {
-		return Config{}, err
+	supabaseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("SUPABASE_URL")), "/")
+	if supabaseURL != "" {
+		parsed, parseErr := url.Parse(supabaseURL)
+		if parseErr != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return Config{}, errors.New("SUPABASE_URL must be an https project URL without a path, query, or fragment")
+		}
 	}
+
 	seedEnabled, err := boolValue("DEMO_SEED_ENABLED", false)
 	if err != nil {
 		return Config{}, err
@@ -58,14 +61,6 @@ func Load() (Config, error) {
 	if seedEnabled && databaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required when DEMO_SEED_ENABLED is true")
 	}
-	demoAccountPassword := os.Getenv("DEMO_ACCOUNT_PASSWORD")
-	if seedEnabled && len(demoAccountPassword) < 12 {
-		return Config{}, errors.New("DEMO_ACCOUNT_PASSWORD must contain at least 12 bytes when demo seeding is enabled")
-	}
-	if seedEnabled && len(demoAccountPassword) > 72 {
-		return Config{}, errors.New("DEMO_ACCOUNT_PASSWORD must contain at most 72 bytes for bcrypt when demo seeding is enabled")
-	}
-
 	timeoutText := valueOrDefault("REQUEST_TIMEOUT", "10s")
 	requestTimeout, err := time.ParseDuration(timeoutText)
 	if err != nil || requestTimeout < time.Millisecond || requestTimeout > time.Minute {
@@ -79,14 +74,13 @@ func Load() (Config, error) {
 	}
 
 	return Config{
-		Port:                port,
-		DatabaseURL:         databaseURL,
-		AppOrigin:           appOrigin,
-		SessionCookieSecure: secure,
-		DemoSeedEnabled:     seedEnabled,
-		DemoAccountPassword: demoAccountPassword,
-		MatchRadiusKM:       matchRadiusKM,
-		RequestTimeout:      requestTimeout,
+		Port:            port,
+		DatabaseURL:     databaseURL,
+		SupabaseURL:     supabaseURL,
+		AppOrigin:       appOrigin,
+		DemoSeedEnabled: seedEnabled,
+		MatchRadiusKM:   matchRadiusKM,
+		RequestTimeout:  requestTimeout,
 	}, nil
 }
 

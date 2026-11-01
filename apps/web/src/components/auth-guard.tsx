@@ -39,6 +39,17 @@ export function AuthGuard({ role, children }: Readonly<{ role: Role; children: R
     );
   }
 
+  if (state.status === "unlinked") {
+    return (
+      <main className="state-page">
+        <p className="eyebrow">ACCOUNT NOT ENABLED</p>
+        <h1>This account has no ride profile.</h1>
+        <p>{state.message}</p>
+        <Link className="button button-primary" href="/login">Return to sign in</Link>
+      </main>
+    );
+  }
+
   if (state.status !== "signed_in" || state.session.user.role !== role) return null;
   return <>{children}</>;
 }

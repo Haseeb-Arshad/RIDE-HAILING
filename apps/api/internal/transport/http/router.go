@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewHandler(pool *pgxpool.Pool, requestTimeout time.Duration, appOrigin string, cookieSecure bool, matchRadiusKM int, logger *slog.Logger) http.Handler {
+func NewHandler(pool *pgxpool.Pool, requestTimeout time.Duration, appOrigin, supabaseURL string, matchRadiusKM int, logger *slog.Logger) http.Handler {
 	router := chi.NewRouter()
 	router.Use(RequestID)
 	router.Use(func(next http.Handler) http.Handler { return AccessLogger(logger, next) })
@@ -26,7 +26,16 @@ func NewHandler(pool *pgxpool.Pool, requestTimeout time.Duration, appOrigin stri
 	router.Get("/readyz", readiness(pool, requestTimeout))
 
 	authRepository := auth.NewPostgresRepository(pool)
-	authHandlers := newAuthHandlers(auth.NewService(authRepository), appOrigin, cookieSecure)
+	var verifier auth.TokenVerifier
+	if supabaseURL != "" {
+		configuredVerifier, err := auth.NewJWKSVerifier(supabaseURL, nil)
+		if err != nil {
+			logger.Error("Supabase Auth verification is misconfigured", "error", err)
+		} else {
+			verifier = configuredVerifier
+		}
+	}
+	authHandlers := newAuthHandlers(auth.NewService(authRepository, verifier), appOrigin)
 	authHandlers.registerRoutes(router)
 	rideRepository := rides.NewPostgresRepository(pool)
 	rideService := rides.NewService(rideRepository, matchRadiusKM)

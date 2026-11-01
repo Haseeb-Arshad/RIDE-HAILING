@@ -18,10 +18,9 @@ func TestMatchRadiusDefaultsAndValidation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Setenv("PORT", "8080")
 			t.Setenv("DATABASE_URL", "")
+			t.Setenv("SUPABASE_URL", "")
 			t.Setenv("APP_ORIGIN", "http://127.0.0.1:3000")
-			t.Setenv("SESSION_COOKIE_SECURE", "false")
 			t.Setenv("DEMO_SEED_ENABLED", "false")
-			t.Setenv("DEMO_ACCOUNT_PASSWORD", "")
 			t.Setenv("REQUEST_TIMEOUT", "10s")
 			t.Setenv("MATCH_RADIUS_KM", test.value)
 

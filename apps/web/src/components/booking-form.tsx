@@ -7,7 +7,6 @@ import { formatDistance, formatMoney } from "@/lib/format";
 type BookingFormProps = {
   locations: Location[];
   ownerID: string;
-  csrfToken: string;
   onRideCreated(ride: Ride): void;
 };
 
@@ -20,7 +19,7 @@ function newIdempotencyKey() {
   return `booking_${crypto.randomUUID()}`;
 }
 
-export function BookingForm({ locations, ownerID, csrfToken, onRideCreated }: BookingFormProps) {
+export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormProps) {
   const [pickupID, setPickupID] = useState("");
   const [destinationID, setDestinationID] = useState("");
   const [category, setCategory] = useState<Category>("economy");
@@ -83,7 +82,7 @@ export function BookingForm({ locations, ownerID, csrfToken, onRideCreated }: Bo
     setError(null);
     setQuotePending(true);
     try {
-      const nextQuote = await api.quote(input, csrfToken);
+      const nextQuote = await api.quote(input);
       setQuote(nextQuote);
       setQuoteInputSignature(signature(input));
     } catch (reason) {
@@ -102,7 +101,7 @@ export function BookingForm({ locations, ownerID, csrfToken, onRideCreated }: Bo
     idempotencyKey.current = key;
     try { sessionStorage.setItem(attemptStorageKey, JSON.stringify({ key, input, owner_id: ownerID } satisfies SavedAttempt)); } catch { /* The in-memory key still protects retries on this page. */ }
     try {
-      const ride = await api.createRide(input, csrfToken, key);
+      const ride = await api.createRide(input, key);
       idempotencyKey.current = null;
       try { sessionStorage.removeItem(attemptStorageKey); } catch { /* Storage may be unavailable. */ }
       onRideCreated(ride);

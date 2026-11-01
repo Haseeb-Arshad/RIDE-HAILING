@@ -33,7 +33,7 @@ export default function LoginPage() {
       router.replace(destinationFor(session.user.role));
     } catch (reason) {
       if (reason instanceof ApiError && reason.status === 401) {
-        setError("That email and password don’t match a seeded demo account.");
+        setError("That email and password don’t match an approved demo account.");
       } else if (reason instanceof ApiError) {
         setError(reason.message);
       } else {
@@ -58,7 +58,7 @@ export default function LoginPage() {
         <div className="login-intro">
           <p className="eyebrow">LAHORE · RIDE BOOKING DEMO</p>
           <h1 id="login-title">Welcome back.</h1>
-          <p>Sign in with one of the seeded accounts to open the rider or driver workspace.</p>
+          <p>Sign in with an approved Supabase Auth account to open the rider or driver workspace.</p>
         </div>
 
         <form className="form-stack" onSubmit={submit}>
@@ -79,12 +79,11 @@ export default function LoginPage() {
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               required
-              maxLength={72}
             />
-            <span className="field-hint">Use the password configured when the demo accounts were seeded.</span>
+            <span className="field-hint">Use the password set for this demo account in Supabase Auth.</span>
           </div>
           {error && <p className="notice notice-error" role="alert">{error}</p>}
-          {state.status === "unavailable" && !error && (
+          {(state.status === "unavailable" || state.status === "unlinked") && !error && (
             <p className="notice notice-error" role="alert">{state.message}</p>
           )}
           <button className="button button-primary button-wide" type="submit" disabled={pending || password.length === 0}>
@@ -94,7 +93,7 @@ export default function LoginPage() {
         </form>
 
         <p className="login-footnote">
-          The session is kept in a secure, HttpOnly cookie. This browser never stores your password or session token.
+          Supabase Auth manages your sign-in session. The ride service receives only an access token, never your password.
         </p>
       </section>
       <footer className="app-footer login-footer">
