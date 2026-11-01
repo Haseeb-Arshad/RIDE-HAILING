@@ -22,11 +22,28 @@ test("rider books a ride that a separate driver context accepts and completes", 
 
   try {
     await signIn(
+      driverPage,
+      requiredSetting("E2E_DRIVER_EMAIL"),
+      requiredSetting("E2E_DRIVER_PASSWORD"),
+      "driver",
+    );
+    await expect(driverPage.getByRole("heading", { name: /Good to see you/ })).toBeVisible();
+    const availability = driverPage.locator(".availability-badge");
+    await expect(availability).not.toHaveText("Checking", { timeout: 30_000 });
+    const previousTrip = driverPage.getByRole("button", { name: "Complete trip" });
+    if (await previousTrip.isVisible()) {
+      await previousTrip.click();
+      await expect(availability).toHaveText("Available", { timeout: 30_000 });
+      await expect(driverPage.getByRole("status").filter({ hasText: /completed/i })).toBeVisible();
+    }
+
+    await signIn(
       riderPage,
       requiredSetting("E2E_RIDER_EMAIL"),
       requiredSetting("E2E_RIDER_PASSWORD"),
       "rider",
     );
+    await expect(riderPage.getByLabel("Pickup")).toBeVisible({ timeout: 30_000 });
     await riderPage.getByLabel("Pickup").selectOption("10000000-0000-4000-8000-000000000001");
     await riderPage.getByLabel("Destination").selectOption("10000000-0000-4000-8000-000000000002");
     await riderPage.getByRole("button", { name: "Review fare estimate" }).click();
@@ -35,23 +52,18 @@ test("rider books a ride that a separate driver context accepts and completes", 
     await expect(riderPage).toHaveURL(/\/rides\/[0-9a-f-]+$/);
     await expect(riderPage.getByText("Ride requested")).toBeVisible();
 
-    await signIn(
-      driverPage,
-      requiredSetting("E2E_DRIVER_EMAIL"),
-      requiredSetting("E2E_DRIVER_PASSWORD"),
-      "driver",
-    );
     const acceptButton = driverPage.getByRole("button", { name: "Accept ride" });
     await expect(acceptButton).toBeVisible({ timeout: 30_000 });
     await acceptButton.click();
-    await expect(driverPage.getByRole("button", { name: "Complete ride" })).toBeVisible();
+    await expect(driverPage.getByRole("button", { name: "Complete trip" })).toBeVisible();
     await expect(riderPage.getByText("Driver assigned")).toBeVisible({ timeout: 15_000 });
 
-    await driverPage.getByRole("button", { name: "Complete ride" }).click();
-    await expect(driverPage.getByText("Trip completed")).toBeVisible();
+    await driverPage.getByRole("button", { name: "Complete trip" }).click();
+    await expect(driverPage.getByRole("status").filter({ hasText: /completed/i })).toBeVisible();
+    await expect(availability).toHaveText("Available", { timeout: 30_000 });
     await expect(riderPage.getByText("Trip completed")).toBeVisible({ timeout: 15_000 });
     await expect(riderPage.getByText("Your trip is complete. Thanks for riding with us.")).toBeVisible();
   } finally {
-    await Promise.all([riderContext.close(), driverContext.close()]);
+    await Promise.allSettled([riderContext.close(), driverContext.close()]);
   }
 });
