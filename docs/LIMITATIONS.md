@@ -1,22 +1,23 @@
-# Current limitations
+# Current limitations and verification
 
-This repository is an assessment demo. A working local build or passing unit test does not establish that the external Supabase project is configured or that the live ride journey has passed.
+This repository is an assessment demo, not a production ride-hailing service. Its connected Supabase flow was verified on 2026-11-02; the remaining boundaries below are still important.
 
-## Verification still depends on project setup
+## Verified against the connected project
 
-- The Supabase migration and seed require the project's database URL in the ignored root `.env` and existing confirmed Supabase Auth accounts for the demo emails.
-- The Go JWT verifier accepts asymmetric ES256 and RS256 signing keys from the project's public JWKS. It does not accept legacy HS256 shared-secret tokens. The project must be configured to issue one of the supported asymmetric algorithms.
-- PostgreSQL race tests require `TEST_DATABASE_URL` pointed at a migrated, isolated database. Without it, those integration tests skip; Go unit tests do not prove database locking.
-- The Playwright journey requires a migrated and seeded database, public browser Auth settings, dedicated rider/driver credentials, and an installed browser. It has not passed until run against those services.
-- The original five-page technical assessment was not supplied. Requirements that exist only in that source cannot be mapped or verified here.
+- Both application migrations were applied, the seed linked three Supabase Auth users to app profiles, and seven fixed Lahore locations plus two driver profiles were created.
+- PostgreSQL integration tests passed against the project's database, including transactional ride lifecycle, retry, and race cases. The tests clean their temporary rows.
+- The Playwright rider-to-driver journey passed with real Supabase sign-in, quote, booking, acceptance, and completion. It uses dedicated `example.test` accounts and leaves completed demo ride records in Supabase. The test completes any prior active assignment on the dedicated driver account before starting.
+- The private `ride_hailing` schema was checked through the Supabase Data API: it returned `PGRST106` because the schema is not exposed. PostgreSQL also reported no `USAGE` grants for `anon`, `authenticated`, or `service_role`.
+- Web lint, 18 frontend tests, the production build, Go tests, and the GitHub API/web checks passed. GitHub Actions does not connect to Supabase; its checks are separate from the PostgreSQL integration evidence.
+
+These are point-in-time checks for the current local configuration. Re-run them after relevant code, schema, Auth, or project setting changes. The original five-page technical assessment was not supplied, so requirements that appear only in it remain unknown.
 
 ## Product and operational boundaries
 
-- Only fixed Lahore demo locations and static driver coordinates are available. Distance, fare, and ETA are illustrative; there is no map, road route, GPS freshness, or live dispatch.
+- The UI has fixed Lahore demo locations and static driver coordinates. Fare, distance, and ETA are illustrative; there is no Google Maps, road routing, live GPS, GPS freshness, or live dispatch.
 - There is one rider-facing booking and one active assignment per ride. Reassignment, offer expiry, payments, refunds, notifications, public registration, and OAuth are not implemented.
 - Active ride views poll. There is no WebSocket, SSE, Redis presence store, or event broker.
-- Supabase access tokens can remain valid until their expiry after the browser signs out. Immediate revocation is not implemented.
-- The private `ride_hailing` schema relies on server-side Go access, forced RLS, and remote project configuration that keeps the schema out of the Data API exposure list. The remote settings still need confirmation.
+- Supabase access tokens can remain valid until expiry after the browser signs out. Immediate revocation is not implemented.
 - There is no hosted deployment, production monitoring, load test, backup/restore proof, or independent multi-instance database race run.
 
 See [Requirements](REQUIREMENTS.md), [Architecture](ARCHITECTURE.md), and [Contract](CONTRACT.md) for the requirement map and current implementation details.
