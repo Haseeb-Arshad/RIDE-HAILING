@@ -26,7 +26,7 @@ type GoogleRouteMapProps = {
   pickupCustom?: Location | null;
   destinationCustom?: Location | null;
   selectionTarget?: "pickup" | "destination" | null;
-  onMapPointSelected?(point: { latitude: number; longitude: number }): void;
+  onMapPointSelected?(point: { latitude: number; longitude: number }, target: "pickup" | "destination"): void;
   onMapPointRejected?(): void;
 };
 
@@ -46,6 +46,7 @@ export function GoogleRouteMap({
   const canvasRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const routeRef = useRef<google.maps.Polyline | null>(null);
   const [state, setState] = useState<MapState>(apiKey ? "loading" : "missing-key");
 
   useEffect(() => {
@@ -74,6 +75,8 @@ export function GoogleRouteMap({
       active = false;
       markersRef.current.forEach((marker) => marker.setMap(null));
       markersRef.current = [];
+      routeRef.current?.setMap(null);
+      routeRef.current = null;
       mapRef.current = null;
     };
   }, []);
@@ -84,6 +87,8 @@ export function GoogleRouteMap({
 
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
+    routeRef.current?.setMap(null);
+    routeRef.current = null;
 
     const allLocations = [...locations, ...(pickupCustom ? [pickupCustom] : []), ...(destinationCustom ? [destinationCustom] : [])];
     const selectedLocations = allLocations.filter((location) => location.id === pickupID || location.id === destinationID);
@@ -114,6 +119,27 @@ export function GoogleRouteMap({
       bounds.extend({ lat: location.latitude, lng: location.longitude });
     }
 
+    const pickup = allLocations.find((location) => location.id === pickupID);
+    const destination = allLocations.find((location) => location.id === destinationID);
+    if (
+      pickup && destination &&
+      Number.isFinite(pickup.latitude) && Number.isFinite(pickup.longitude) &&
+      Number.isFinite(destination.latitude) && Number.isFinite(destination.longitude)
+    ) {
+      routeRef.current = new google.maps.Polyline({
+        map,
+        path: [
+          { lat: pickup.latitude, lng: pickup.longitude },
+          { lat: destination.latitude, lng: destination.longitude },
+        ],
+        geodesic: true,
+        strokeColor: "#1d624c",
+        strokeOpacity: 0.78,
+        strokeWeight: 4,
+        zIndex: 1,
+      });
+    }
+
     if (visibleLocations.length === 1) {
       const location = visibleLocations[0];
       map.setCenter({ lat: location.latitude, lng: location.longitude });
@@ -141,7 +167,7 @@ export function GoogleRouteMap({
         onMapPointRejected?.();
         return;
       }
-      onMapPointSelected(point);
+      onMapPointSelected(point, selectionTarget);
     });
 
     return () => {
@@ -191,6 +217,7 @@ export function GoogleRouteMap({
       <div className="google-map-legend" aria-label="Map markers">
         {pickupID && <span><i className="legend-dot legend-pickup" />Pickup</span>}
         {destinationID && <span><i className="legend-dot legend-destination" />Destination</span>}
+        {hasCompleteRoute && <span><i className="legend-route" />Approximate route line</span>}
         {!pickupID && !destinationID && <span><i className="legend-dot legend-stop" />Suggested stops</span>}
         {Boolean(pickupID || destinationID) && !hasCompleteRoute && <span><i className="legend-dot legend-stop" />Other demo stops</span>}
       </div>

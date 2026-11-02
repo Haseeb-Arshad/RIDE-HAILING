@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppFrame } from "@/components/app-frame";
 import { AuthGuard } from "@/components/auth-guard";
 import { RouteSummary } from "@/components/route-summary";
+import { GoogleRouteMap } from "@/components/google-route-map";
 import { StatusPill } from "@/components/ride-status";
 import { api, ApiError, type DriverRequest, type DriverStatus, type Ride } from "@/lib/api";
 import { useAuth } from "@/lib/auth-provider";
@@ -195,6 +196,11 @@ function DriverWorkspace() {
                 </div>
                 <div className="driver-assignment-content">
                   <RouteSummary pickup={assignment.pickup} destination={assignment.destination} />
+                  <GoogleRouteMap
+                    locations={[assignment.pickup, assignment.destination]}
+                    pickupID={assignment.pickup.id}
+                    destinationID={assignment.destination.id}
+                  />
                   <div className="ride-facts">
                     <div className="ride-fact"><span>Rider</span><strong>{assignment.rider.display_name}</strong></div>
                     <div className="ride-fact"><span>Category</span><strong>{formatCategory(assignment.category)}</strong></div>
