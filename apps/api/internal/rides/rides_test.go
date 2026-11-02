@@ -77,6 +77,37 @@ func TestQuoteRejectsMalformedOrUnsupportedInputBeforeStorage(t *testing.T) {
 	}
 }
 
+func TestQuoteAcceptsLabeledCoordinatesAcrossLahoreAndRejectsOutOfAreaPoints(t *testing.T) {
+	repository := &fakeRepository{}
+	service := NewService(repository, pricing.DefaultMatchRadiusKM)
+	request := QuoteRequest{
+		Pickup:      &LocationInput{Name: "Street pin", Area: "DHA Phase 6", Latitude: 31.47, Longitude: 74.49},
+		Destination: &LocationInput{Name: "Park pin", Area: "Raiwind Road", Latitude: 31.36, Longitude: 74.22},
+		Category:    "economy",
+	}
+	if _, err := service.Quote(context.Background(), request); err != nil {
+		t.Fatalf("quote from custom Lahore points: %v", err)
+	}
+	if repository.quoteCalls != 1 || repository.quoteRequest.Pickup == nil || repository.quoteRequest.Destination == nil {
+		t.Fatalf("custom endpoints were not normalized: %+v", repository.quoteRequest)
+	}
+
+	outside := request
+	outside.Destination = &LocationInput{Name: "Outside Lahore", Area: "", Latitude: 31.9, Longitude: 74.22}
+	if _, err := service.Quote(context.Background(), outside); err == nil {
+		t.Fatal("quote accepted a destination outside the Lahore service area")
+	}
+	if repository.quoteCalls != 1 {
+		t.Fatalf("out-of-area request reached storage; quote calls=%d", repository.quoteCalls)
+	}
+
+	samePoint := request
+	samePoint.Destination = &LocationInput{Name: "Same pin", Area: "Lahore", Latitude: request.Pickup.Latitude, Longitude: request.Pickup.Longitude}
+	if _, err := service.Quote(context.Background(), samePoint); err == nil {
+		t.Fatal("quote accepted identical coordinate endpoints")
+	}
+}
+
 func TestRideReadRejectsMalformedIDsWithoutStorage(t *testing.T) {
 	repository := &fakeRepository{}
 	service := NewService(repository, pricing.DefaultMatchRadiusKM)

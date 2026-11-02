@@ -36,6 +36,14 @@ test("rider books a ride that a separate driver context accepts and completes", 
       await expect(availability).toHaveText("Available", { timeout: 30_000 });
       await expect(driverPage.getByRole("status").filter({ hasText: /completed/i })).toBeVisible();
     }
+    if (!(await availability.textContent())?.includes("Available")) {
+      await driverPage.getByRole("button", { name: "Go available" }).click();
+      await expect(availability).toHaveText("Available", { timeout: 30_000 });
+    }
+    await driverPage.getByRole("button", { name: "Go offline" }).click();
+    await expect(availability).toHaveText("Offline", { timeout: 30_000 });
+    await driverPage.getByRole("button", { name: "Go available" }).click();
+    await expect(availability).toHaveText("Available", { timeout: 30_000 });
 
     await signIn(
       riderPage,
@@ -43,19 +51,31 @@ test("rider books a ride that a separate driver context accepts and completes", 
       requiredSetting("E2E_RIDER_PASSWORD"),
       "rider",
     );
-    await expect(riderPage.getByLabel("Pickup")).toBeVisible({ timeout: 30_000 });
+    const pickupSelect = riderPage.getByLabel("Pickup", { exact: true });
+    const cancelRideButton = riderPage.getByRole("button", { name: "Cancel ride" });
+    await expect(pickupSelect.or(cancelRideButton)).toBeVisible({ timeout: 30_000 });
+    if (await cancelRideButton.isVisible()) {
+      riderPage.once("dialog", (dialog) => dialog.accept());
+      await cancelRideButton.click();
+      await expect(riderPage.getByText("Trip cancelled")).toBeVisible({ timeout: 30_000 });
+      await riderPage.goto("/rider");
+    }
+    await expect(pickupSelect).toBeVisible({ timeout: 30_000 });
     if (!process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY?.trim()) {
       await expect(riderPage.getByText("Google Maps is ready to connect")).toBeVisible();
     }
-    await riderPage.getByLabel("Pickup").selectOption("10000000-0000-4000-8000-000000000001");
-    await riderPage.getByLabel("Destination").selectOption("10000000-0000-4000-8000-000000000002");
+    await riderPage.getByLabel("Pickup", { exact: true }).selectOption("10000000-0000-4000-8000-000000000001");
+    await riderPage.getByLabel("Destination", { exact: true }).selectOption("10000000-0000-4000-8000-000000000002");
     await riderPage.getByRole("button", { name: "Review fare estimate" }).click();
     await expect(riderPage.getByText("Approximate estimate")).toBeVisible();
     await riderPage.getByRole("button", { name: "Request this ride" }).click();
     await expect(riderPage).toHaveURL(/\/rides\/[0-9a-f-]+$/);
     await expect(riderPage.getByText("Ride requested")).toBeVisible();
 
-    const acceptButton = driverPage.getByRole("button", { name: "Accept ride" });
+    const requestedRideID = new URL(riderPage.url()).pathname.split("/").at(-1);
+    if (!requestedRideID) throw new Error("The rider booking URL does not include a ride ID.");
+    const requestCard = driverPage.locator(`article[data-ride-id="${requestedRideID}"]`);
+    const acceptButton = requestCard.getByRole("button", { name: "Accept ride" });
     await expect(acceptButton).toBeVisible({ timeout: 30_000 });
     await acceptButton.click();
     await expect(driverPage.getByRole("button", { name: "Complete trip" })).toBeVisible();

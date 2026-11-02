@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type Category, type Location, type Quote, type QuoteInput, type Ride } from "@/lib/api";
-import { formatDistance, formatMoney } from "@/lib/format";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { api, ApiError, type Category, type Location, type LocationInput, type Quote, type QuoteInput, type Ride } from "@/lib/api";
+import { formatDate, formatDistance, formatMoney } from "@/lib/format";
 import { GoogleRouteMap } from "@/components/google-route-map";
 import { Armchair, ArrowRight, CarFront, Check, MapPin, Navigation, ShieldCheck, Sparkles } from "lucide-react";
 
@@ -12,7 +12,7 @@ type BookingFormProps = {
   onRideCreated(ride: Ride): void;
 };
 
-const signature = (input: QuoteInput) => `${input.pickup_location_id}|${input.destination_location_id}|${input.category}`;
+const signature = (input: QuoteInput) => JSON.stringify(input);
 const attemptStorageKey = "ride-lahore.booking-attempt";
 
 type SavedAttempt = { key: string; input: QuoteInput; owner_id: string };
@@ -24,6 +24,9 @@ function newIdempotencyKey() {
 export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormProps) {
   const [pickupID, setPickupID] = useState("");
   const [destinationID, setDestinationID] = useState("");
+  const [pickupPoint, setPickupPoint] = useState<LocationInput | null>(null);
+  const [destinationPoint, setDestinationPoint] = useState<LocationInput | null>(null);
+  const [selectionTarget, setSelectionTarget] = useState<"pickup" | "destination" | null>(null);
   const [category, setCategory] = useState<Category>("economy");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [quoteInputSignature, setQuoteInputSignature] = useState<string | null>(null);
@@ -34,11 +37,17 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
   const restoreAttempt = useRef(false);
 
   const input: QuoteInput = {
-    pickup_location_id: pickupID,
-    destination_location_id: destinationID,
+    ...(pickupPoint ? { pickup: pickupPoint } : { pickup_location_id: pickupID }),
+    ...(destinationPoint ? { destination: destinationPoint } : { destination_location_id: destinationID }),
     category,
   };
-  const validRoute = pickupID !== "" && destinationID !== "" && pickupID !== destinationID;
+  const pickupValue = pickupPoint ? "__custom__" : selectionTarget === "pickup" ? "__map__" : pickupID;
+  const destinationValue = destinationPoint ? "__custom__" : selectionTarget === "destination" ? "__map__" : destinationID;
+  const pickupSelectionReady = Boolean(pickupPoint || pickupID);
+  const destinationSelectionReady = Boolean(destinationPoint || destinationID);
+  const validRoute = pickupSelectionReady && destinationSelectionReady &&
+    !(pickupID !== "" && pickupID === destinationID) &&
+    !(pickupPoint && destinationPoint && pickupPoint.latitude === destinationPoint.latitude && pickupPoint.longitude === destinationPoint.longitude);
   const hasCurrentQuote = quote !== null && quoteInputSignature === signature(input);
 
   useEffect(() => {
@@ -49,8 +58,12 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
         const savedValue = sessionStorage.getItem(attemptStorageKey);
         if (!savedValue) return;
         const saved = JSON.parse(savedValue) as SavedAttempt;
-        const hasLocations = locations.some((location) => location.id === saved.input?.pickup_location_id)
-          && locations.some((location) => location.id === saved.input?.destination_location_id);
+        const hasLocations = (saved.input?.pickup
+          ? Number.isFinite(saved.input.pickup.latitude) && Number.isFinite(saved.input.pickup.longitude)
+          : locations.some((location) => location.id === saved.input?.pickup_location_id))
+          && (saved.input?.destination
+            ? Number.isFinite(saved.input.destination.latitude) && Number.isFinite(saved.input.destination.longitude)
+            : locations.some((location) => location.id === saved.input?.destination_location_id));
         const validKey = typeof saved.key === "string" && /^[!-~]{1,128}$/.test(saved.key);
         const validCategory = saved.input?.category === "economy" || saved.input?.category === "comfort";
         if (saved.owner_id !== ownerID || !hasLocations || !validKey || !validCategory || saved.input.pickup_location_id === saved.input.destination_location_id) {
@@ -58,8 +71,10 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
           return;
         }
         await Promise.resolve();
-        setPickupID(saved.input.pickup_location_id);
-        setDestinationID(saved.input.destination_location_id);
+        if (saved.input.pickup) setPickupPoint(saved.input.pickup);
+        else setPickupID(saved.input.pickup_location_id ?? "");
+        if (saved.input.destination) setDestinationPoint(saved.input.destination);
+        else setDestinationID(saved.input.destination_location_id ?? "");
         setCategory(saved.input.category);
         idempotencyKey.current = saved.key;
       } catch {
@@ -69,12 +84,62 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
     void restore();
   }, [locations, ownerID]);
 
+  useEffect(() => {
+    if (!selectionTarget) return;
+    document.getElementById("route-map-preview")?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+  }, [selectionTarget]);
+
   function resetEstimate() {
     setQuote(null);
     setQuoteInputSignature(null);
     idempotencyKey.current = null;
     setError(null);
     try { sessionStorage.removeItem(attemptStorageKey); } catch { /* Storage may be unavailable. */ }
+  }
+
+  const selectMapPoint = useCallback((coordinates: { latitude: number; longitude: number }) => {
+    const point: LocationInput = { name: "Pinned location", area: "Lahore", ...coordinates };
+    if (selectionTarget === "pickup") setPickupPoint(point);
+    if (selectionTarget === "destination") setDestinationPoint(point);
+    setSelectionTarget(null);
+    resetEstimate();
+  }, [selectionTarget]);
+
+  const rejectMapPoint = useCallback(() => {
+    setError("Choose a point inside the Lahore service area.");
+  }, []);
+
+  function changeEndpoint(target: "pickup" | "destination", value: string) {
+    if (target === "pickup") {
+      if (value === "__map__") {
+        setPickupID("");
+        setPickupPoint(null);
+        setSelectionTarget("pickup");
+      } else if (value === "__custom__") {
+        setSelectionTarget(null);
+      } else {
+        setPickupID(value);
+        setPickupPoint(null);
+        setSelectionTarget(null);
+      }
+    } else if (value === "__map__") {
+      setDestinationID("");
+      setDestinationPoint(null);
+      setSelectionTarget("destination");
+    } else if (value === "__custom__") {
+      setSelectionTarget(null);
+    } else {
+      setDestinationID(value);
+      setDestinationPoint(null);
+      setSelectionTarget(null);
+    }
+    resetEstimate();
+  }
+
+  function updatePoint(target: "pickup" | "destination", update: Partial<LocationInput>) {
+    if (target === "pickup") setPickupPoint((current) => current ? { ...current, ...update } : current);
+    else setDestinationPoint((current) => current ? { ...current, ...update } : current);
+    resetEstimate();
   }
 
   async function reviewEstimate() {
@@ -142,8 +207,12 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
     }
   }
 
-  const pickup = locations.find((location) => location.id === pickupID);
-  const destination = locations.find((location) => location.id === destinationID);
+  const pickup = pickupPoint
+    ? { id: "custom:pickup", ...pickupPoint, city: "Lahore" as const }
+    : locations.find((location) => location.id === pickupID);
+  const destination = destinationPoint
+    ? { id: "custom:destination", ...destinationPoint, city: "Lahore" as const }
+    : locations.find((location) => location.id === destinationID);
 
   return (
     <div className="booking-layout">
@@ -164,23 +233,44 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
             <div className="field-row">
               <div className="field-group">
                 <label htmlFor="pickup"><Navigation size={15} aria-hidden="true" />Pickup</label>
-                <select id="pickup" value={pickupID} onChange={(event) => { setPickupID(event.target.value); resetEstimate(); }}>
+                <select id="pickup" value={pickupValue} onChange={(event) => changeEndpoint("pickup", event.target.value)}>
                   <option value="">Choose a pickup</option>
+                  {pickupPoint && <option value="__custom__">{pickupPoint.name} · {pickupPoint.area}</option>}
+                  <option value="__map__">Choose anywhere on the map…</option>
                   {locations.map((location) => (
                     <option key={location.id} value={location.id}>{location.name} · {location.area}</option>
                   ))}
                 </select>
+                {pickupPoint && (
+                  <div className="custom-stop-fields">
+                    <label htmlFor="pickup-place-label">Pickup place</label>
+                    <input id="pickup-place-label" value={pickupPoint.name} maxLength={120} onChange={(event) => updatePoint("pickup", { name: event.target.value })} />
+                    <label htmlFor="pickup-area-label">Area or landmark</label>
+                    <input id="pickup-area-label" value={pickupPoint.area} maxLength={120} onChange={(event) => updatePoint("pickup", { area: event.target.value })} />
+                  </div>
+                )}
               </div>
               <div className="field-group">
                 <label htmlFor="destination"><MapPin size={15} aria-hidden="true" />Destination</label>
-                <select id="destination" value={destinationID} onChange={(event) => { setDestinationID(event.target.value); resetEstimate(); }}>
+                <select id="destination" value={destinationValue} onChange={(event) => changeEndpoint("destination", event.target.value)}>
                   <option value="">Choose a destination</option>
+                  {destinationPoint && <option value="__custom__">{destinationPoint.name} · {destinationPoint.area}</option>}
+                  <option value="__map__">Choose anywhere on the map…</option>
                   {locations.map((location) => (
                     <option key={location.id} value={location.id} disabled={location.id === pickupID}>{location.name} · {location.area}</option>
                   ))}
                 </select>
+                {destinationPoint && (
+                  <div className="custom-stop-fields">
+                    <label htmlFor="destination-place-label">Destination place</label>
+                    <input id="destination-place-label" value={destinationPoint.name} maxLength={120} onChange={(event) => updatePoint("destination", { name: event.target.value })} />
+                    <label htmlFor="destination-area-label">Area or landmark</label>
+                    <input id="destination-area-label" value={destinationPoint.area} maxLength={120} onChange={(event) => updatePoint("destination", { area: event.target.value })} />
+                  </div>
+                )}
               </div>
             </div>
+            {selectionTarget && <p className="field-hint" role="status">Click the map to place your {selectionTarget} pin. The pin must be within the Lahore service area.</p>}
             {pickupID !== "" && pickupID === destinationID && (
               <p className="field-hint" role="alert">Pickup and destination must be different.</p>
             )}
@@ -224,7 +314,14 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
                   <span>{quote.pickup_eta_minutes === null ? "Pickup ETA unavailable" : `About ${quote.pickup_eta_minutes} min pickup`}</span>
                 </div>
                 {quote.pickup_eta_minutes === null && <p className="quote-disclaimer">No eligible available driver could be estimated for this route right now.</p>}
-                <p className="quote-disclaimer">An approximate fare between demo stops. Final road distance and traffic are not included.</p>
+                <details className="fare-breakdown">
+                  <summary>How this estimate is calculated</summary>
+                  <div><span>Fuel price · effective {formatDate(quote.fuel_price_effective_date)}</span><strong>{formatMoney(quote.fuel_price_paisa_per_liter)} / litre</strong></div>
+                  <div><span>Estimated fuel cost</span><strong>{formatMoney(quote.fuel_cost_paisa)}</strong></div>
+                  <div><span>Base fare</span><strong>{formatMoney(quote.base_fare_paisa)}</strong></div>
+                  <div><span>Distance operating cost</span><strong>{formatMoney(quote.distance_cost_paisa)}</strong></div>
+                </details>
+                <p className="quote-disclaimer">Distance is a Haversine estimate with a 1.3 city-road factor. It is not turn-by-turn routing.</p>
                 <button className="button button-primary button-wide" type="submit" disabled={createPending}>
                   {createPending ? "Requesting ride…" : "Request this ride"}
                   {!createPending && <ArrowRight size={18} aria-hidden="true" />}
@@ -237,7 +334,7 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
       </section>
 
       <aside className="booking-aside">
-        <section className="panel" aria-labelledby="route-preview-title">
+        <section id="route-map-preview" className="panel" aria-labelledby="route-preview-title">
           <div className="panel-head">
             <div>
               <p className="eyebrow booking-step">02 / THE WAY THERE</p>
@@ -245,7 +342,16 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
               <p>A little context for your next journey.</p>
             </div>
           </div>
-          <GoogleRouteMap locations={locations} pickupID={pickupID} destinationID={destinationID} />
+          <GoogleRouteMap
+            locations={locations}
+            pickupID={pickupPoint ? "custom:pickup" : pickupID}
+            destinationID={destinationPoint ? "custom:destination" : destinationID}
+            pickupCustom={pickup ?? null}
+            destinationCustom={destination ?? null}
+            selectionTarget={selectionTarget}
+            onMapPointSelected={selectMapPoint}
+            onMapPointRejected={rejectMapPoint}
+          />
           {pickup && destination ? (
             <div className="route-summary">
               <div className="route-rail" aria-hidden="true"><span className="route-dot route-dot-start" /><span className="route-line" /><span className="route-dot route-dot-end" /></div>

@@ -10,7 +10,7 @@
 
 The repository implements the core ride-booking assessment as a runnable Lahore demo: a responsive Next.js and TypeScript client, a Go API, Supabase Auth, and durable PostgreSQL state. Riders can request Economy or Comfort trips, review server-calculated estimates, follow ride status, and cancel when allowed. Drivers can control availability, accept eligible rides, and complete assigned trips.
 
-The central reliability requirement is handled in PostgreSQL transactions and constraints, with coverage for competing assignments, retries, and lifecycle races. The assessment's real-map requirement is optional; this repository has a conditional Google Maps JavaScript integration and a clear setup state, but the current local web environment has no Google Maps browser key, so live map tiles were not verified. This is an assessment demo, not a production ride-hailing service.
+The central reliability requirement is handled in PostgreSQL transactions and constraints, with coverage for competing assignments, retries, lifecycle races, and immutable fare snapshots. Google Maps supports rider-selected pickup and destination pins throughout the configured Lahore service bounds. Distance and fare are transparent estimates; this is an assessment demo, not a production ride-hailing service.
 
 ### How this review treats the attachment
 
@@ -20,7 +20,7 @@ The supplied PDF is the assessment rubric for this review. Its submission and en
 
 | Assessment area | Result | Evidence and boundary |
 |---|---|---|
-| Lahore booking flow | Implemented | Seven fixed Lahore locations; pickup and destination selection; Economy and Comfort; server-side PKR fare, approximate distance, and pickup ETA; ride confirmation, active status, terminal status, and permitted cancellation. Estimates are illustrative. |
+| Lahore booking flow | Implemented | Seven suggested Lahore stops plus rider-selected pins within Lahore service bounds; Economy and Comfort; server-side PKR fare, approximate distance, pickup ETA, and a fuel/base/distance breakdown; ride confirmation, active status, terminal status, and permitted cancellation. Estimates are illustrative. |
 | Responsive UI and states | Implemented | Rider and driver workspaces include loading, validation, success, empty, conflict, and error handling. Component tests cover quote loading/failure, duplicate-submit suppression, stable retry, and ride states. |
 | Backend API | Implemented | Go/Chi exposes the requested create, read, accept, cancel, and complete operations under `/api/v1`, plus quote, current-ride, locations, driver requests, assignment, availability, health, and readiness routes. See [OpenAPI](openapi.yaml) and [API contract](CONTRACT.md). |
 | Matching and lifecycle | Implemented | Eligibility checks availability, city, category, and approximate pickup radius. Valid transitions are enforced; invalid transitions return conflicts. Driver occupancy is released transactionally after cancellation or completion. |
@@ -28,7 +28,7 @@ The supplied PDF is the assessment rubric for this review. Its submission and en
 | Concurrency and retries | Implemented | PostgreSQL row locks, a consistent ride-then-driver lock order, unique assignment/open-ride/idempotency constraints, and request fingerprints protect state across API processes. The live database race suite is the decisive verification for these guarantees. |
 | Security and configuration | Implemented for the demo | Supabase Auth owns credentials; Go verifies asymmetric JWT signatures through public JWKS and loads role/identity from PostgreSQL. The app checks ownership, role, Origin, and request shape. Local `.env` files are ignored; only example templates are tracked. |
 | Local setup and operations | Implemented for development | The README documents separate Go and Next.js processes, migrations, seed, environment variables, health/readiness, and checks. Docker is not required. There is no hosted production deployment, production monitoring, load test, or backup-restore proof. |
-| Maps | Partial / optional | The UI loads Google Maps JavaScript when `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` is configured and plots seeded stops and selected endpoints. In this checkout that key is absent, so the UI displays its setup placeholder. There is no free-form Places search, road-route calculation, or live driver GPS. The assessment explicitly permits a placeholder. |
+| Maps | Partial / optional | The configured Google Maps JavaScript API displays suggested stops and accepts rider-selected pickup/destination pins within the configured Lahore bounds. The Go API validates and persists those pins. Distance is Haversine × a configurable 1.3 road factor, not Google road routing. There is no Places search or live driver GPS. |
 | Documentation and submission | Implemented | README, SQL migrations, automated tests, OpenAPI, architecture/state diagrams, design decisions, limitations, and this response cover the requested submission material. AI assistance is disclosed below. |
 
 Useful implementation evidence includes [booking form](../apps/web/src/components/booking-form.tsx), [ride page](../apps/web/src/app/rides/%5Bid%5D/page.tsx), [Go HTTP routes](../apps/api/internal/transport/http/router.go), [PostgreSQL ride repository](../apps/api/internal/rides/postgres.go), [core schema migration](../supabase/migrations/20261031150815_ride_hailing_core.sql), and [Auth identity migration](../supabase/migrations/20261101151954_supabase_auth_identity.sql). The database race cases are in [ride lifecycle integration tests](../apps/api/internal/rides/lifecycle_integration_test.go) and [idempotency integration tests](../apps/api/internal/rides/postgres_integration_test.go).
@@ -49,9 +49,15 @@ Acceptance starts a PostgreSQL transaction, locks the requested ride row, then l
 
 The browser creates an idempotency key for a booking intent, scopes its saved attempt to the signed-in user, and reuses the key after an uncertain response. The API fingerprints the normalized pickup, destination, and category and persists the key, fingerprint, and ride in the same transaction. Repeating the same request returns the original ride; reusing the key for different input returns a conflict. A unique open-ride constraint also prevents a second active booking under a different key.
 
+For rider-selected coordinates, the normalized endpoint labels and coordinates are included in the fingerprint. The selected points are persisted as non-suggested locations in the same transaction as the ride.
+
+#### Fare calculation
+
+The server applies a configurable road factor to Haversine distance, then calculates `base fare + fuel cost + distance operating cost`. Fuel cost uses the configured petrol price and vehicle efficiency: `ceil(distance metres × fuel price paisa/litre ÷ efficiency metres/litre)`. Each quote reports the effective date and breakdown; a ride stores the same values as an immutable pricing snapshot. The seeded petrol price is PKR 377.91/litre, effective 31 October 2026 ([PSO fuel rates](https://www.psopk.com/en/fuels/fuel-prices); [reported unchanged through 2 November](https://www.dawn.com/news/2040998/petrol-price-unchanged-high-speed-diesel-raised-by-rs229)). Petrol prices are manually updated in `ride_hailing.pricing_rates`, rather than fetched automatically. The resulting route distance, fare, and pickup ETA are estimates; they do not use turn-by-turn routing or traffic data.
+
 #### 4. How does the frontend respond when an API request fails?
 
-The interface shows pending states and disables duplicate actions while a request is in flight. Validation and API failures appear as actionable messages. On a `401`, the Supabase browser session is cleared; on a `409`, the rider or driver view reconciles with the current server state. If ride creation has an uncertain network result, the client retains the request key and checks the rider's current ride before offering a safe retry. Active rides are refreshed by polling, which stops at a terminal state.
+The interface shows pending states and disables duplicate actions while a request is in flight. Validation and API failures appear as actionable messages. The API client validates each error-envelope field and uses safe fallback text for object-shaped or malformed messages, so a JSON/object payload is not rendered as the login error; a regression test covers this case. On a `401`, the Supabase browser session is cleared; on a `409`, the rider or driver view reconciles with the current server state. If ride creation has an uncertain network result, the client retains the request key and checks the rider's current ride before offering a safe retry. Active rides are refreshed by polling, which stops at a terminal state.
 
 #### 5. How would you scale to multiple cities and thousands of concurrent users?
 
@@ -79,17 +85,18 @@ Payment capture and refunds should follow secure dispatch and operational founda
 
 #### Current local checks
 
-- `go test -v ./... -count=1`: Go unit and HTTP tests passed. PostgreSQL-only cases were skipped in this isolated run because `TEST_DATABASE_URL` was explicitly removed.
+- `go test ./... -count=1` with `TEST_DATABASE_URL` unset: Go unit and HTTP tests passed; PostgreSQL-only cases were skipped in this isolated run.
 - `go vet ./...`: passed.
-- `npm test`: 19 tests across 4 files passed.
+- `npm test`: 23 tests passed across five files.
 - `npm run lint`: passed.
 - `npx tsc --noEmit`: passed.
 - `npm run build`: passed; Next.js generated the production build and routes.
-- `scripts/test-supabase-integration.ps1`: passed against the configured Supabase PostgreSQL project. This run exercised the migration-dependent seed/schema checks, Auth profile lookup, ride creation/replay, driver assignment, and PostgreSQL concurrency/lifecycle cases; test fixtures use rollback or cleanup.
+- The full Go suite with `TEST_DATABASE_URL` set to the supplied Supabase PostgreSQL database passed. It exercised the database-backed lifecycle, retry, race, custom-pin, and fuel-price snapshot cases; database test fixtures clean up their rows.
+- `npm run test:e2e`: both browser tests passed with real Supabase Auth and Google Maps. A separate ride-journey run against the existing `localhost:3000` app also passed after its API rewrite was refreshed.
 
 #### Connected-provider evidence
 
-The real Supabase Auth rider-to-driver Playwright journey passed on 2 November 2026, as recorded in the [README](../README.md), [requirements map](REQUIREMENTS.md), and [verification notes](LIMITATIONS.md). The PostgreSQL integration suite was also rerun successfully for this review. The Playwright journey creates completed demo ride rows and was not rerun here. Live Google Maps rendering was not verified because the local web environment has no browser key.
+The real Supabase Auth rider-to-driver Playwright journey passed on 2 November 2026, including the driver availability toggle, accepting the specific ride requested, and completion reflected on the rider page. The map test loaded Google Maps, placed custom pins, and displayed the fare breakdown. A database integration test verifies arbitrary in-bounds Lahore pins, the fuel/distance formula, ride snapshots, and exclusion of private pins from suggested locations. Browser journeys use dedicated demo accounts and leave completed/cancelled ride records in Supabase.
 
 ### AI-use disclosure
 
@@ -97,4 +104,4 @@ AI-assisted coding tools supported implementation and technical documentation. T
 
 ### Scope limits
 
-This implementation does not claim free-form address search, road routing, live GPS, dynamic dispatch or reassignment, payment processing, refunds, customer notifications, public signup, OAuth, real-time push updates, production deployment, load-test results, or backup/restore proof. Current fare, distance, ETA, driver positions, and Lahore locations are demo data and estimates. See [current limitations](LIMITATIONS.md) and [architecture notes](ARCHITECTURE.md) for the proposed growth path.
+This implementation does not claim free-form address search, road routing, live GPS, dynamic dispatch or reassignment, payment processing, refunds, customer notifications, public signup, OAuth, real-time push updates, automatic fuel-price updates, production deployment, load-test results, or backup/restore proof. Current fare, distance, ETA, and driver positions remain estimates or demo data. See [current limitations](LIMITATIONS.md) and [architecture notes](ARCHITECTURE.md) for the proposed growth path.

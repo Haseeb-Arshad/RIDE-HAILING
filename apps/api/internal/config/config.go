@@ -34,9 +34,11 @@ func Load() (Config, error) {
 		return Config{}, errors.New("PORT must be an integer between 1 and 65535")
 	}
 
-	appOrigin := valueOrDefault("APP_ORIGIN", "http://localhost:3000")
-	if err := validateOrigin(appOrigin); err != nil {
-		return Config{}, err
+	appOrigin := valueOrDefault("APP_ORIGIN", "http://127.0.0.1:3000,http://localhost:3000")
+	for _, origin := range strings.Split(appOrigin, ",") {
+		if err := validateOrigin(strings.TrimSpace(origin)); err != nil {
+			return Config{}, err
+		}
 	}
 
 	databaseURL := strings.TrimSpace(os.Getenv("DATABASE_URL"))

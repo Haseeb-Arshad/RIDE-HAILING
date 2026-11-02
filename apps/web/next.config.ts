@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 
+// Rewrites use this value at startup; restart Next.js after changing API_ORIGIN.
 const configuredOrigin = process.env.API_ORIGIN ?? "http://localhost:8080";
 const apiURL = new URL(configuredOrigin);
 
@@ -15,6 +16,7 @@ if (
 }
 
 const nextConfig: NextConfig = {
+  distDir: process.env.NEXT_DIST_DIR ?? ".next",
   turbopack: {
     rules: {
       "*.css": {

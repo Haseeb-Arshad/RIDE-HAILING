@@ -330,16 +330,13 @@ func TestPostgresDriverRequestsUseTheDriversEligibleCategoriesAndAvailability(t 
 	pool := openRideIntegrationPool(t, 4)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	fixture := createLifecycleFixture(t, ctx, pool, 2, 1, 2)
+	fixture := createLifecycleFixture(t, ctx, pool, 2, 1, 2, "economy", "comfort")
 	defer cleanupLifecycleFixture(t, pool, fixture)
 	service := NewService(NewPostgresRepository(pool), pricing.DefaultMatchRadiusKM)
 	driverID := fixture.DriverIDs[0]
 
 	if _, err := pool.Exec(ctx, `DELETE FROM ride_hailing.driver_categories WHERE driver_id = $1::uuid AND category = 'comfort'`, driverID); err != nil {
 		t.Fatalf("limit driver test categories to economy: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE ride_hailing.rides SET category = 'comfort' WHERE id = $1::uuid`, fixture.RideIDs[1]); err != nil {
-		t.Fatalf("change second test ride category: %v", err)
 	}
 	var allRequests []DriverRequest
 	cursor := ""
@@ -381,9 +378,10 @@ func TestPostgresDriverRequestsUseTheDriversEligibleCategoriesAndAvailability(t 
 }
 
 type lifecycleFixture struct {
-	RiderIDs  []string
-	DriverIDs []string
-	RideIDs   []string
+	RiderIDs    []string
+	DriverIDs   []string
+	RideIDs     []string
+	LocationIDs []string
 }
 
 type acceptResult struct {
@@ -391,7 +389,7 @@ type acceptResult struct {
 	err  error
 }
 
-func createLifecycleFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, riderCount, driverCount, rideCount int) lifecycleFixture {
+func createLifecycleFixture(t *testing.T, ctx context.Context, pool *pgxpool.Pool, riderCount, driverCount, rideCount int, rideCategories ...string) lifecycleFixture {
 	t.Helper()
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
@@ -440,13 +438,17 @@ func createLifecycleFixture(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	}
 	for index := 0; index < rideCount; index++ {
 		riderID := fixture.RiderIDs[index%len(fixture.RiderIDs)]
+		category := "economy"
+		if index < len(rideCategories) && rideCategories[index] != "" {
+			category = rideCategories[index]
+		}
 		var rideID string
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO ride_hailing.rides
 				(rider_id, pickup_location_id, destination_location_id, category,
 				 estimated_fare_paisa, estimated_distance_meters, pickup_eta_minutes)
-			VALUES ($1::uuid, $2::uuid, $3::uuid, 'economy', 23676, 1446, 2)
-			RETURNING id::text`, riderID, integrationPickupID, integrationDestinationID).Scan(&rideID); err != nil {
+			VALUES ($1::uuid, $2::uuid, $3::uuid, $4::ride_hailing.ride_category, 23676, 1446, 2)
+			RETURNING id::text`, riderID, integrationPickupID, integrationDestinationID, category).Scan(&rideID); err != nil {
 			t.Fatalf("insert lifecycle ride: %v", err)
 		}
 		fixture.RideIDs = append(fixture.RideIDs, rideID)
@@ -472,8 +474,18 @@ func cleanupLifecycleFixture(t *testing.T, pool *pgxpool.Pool, fixture lifecycle
 			t.Errorf("delete lifecycle assignment: %v", err)
 			return
 		}
+		if _, err := tx.Exec(ctx, `DELETE FROM ride_hailing.idempotency_keys WHERE ride_id = $1::uuid`, rideID); err != nil {
+			t.Errorf("delete lifecycle idempotency key: %v", err)
+			return
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM ride_hailing.rides WHERE id = $1::uuid`, rideID); err != nil {
 			t.Errorf("delete lifecycle ride: %v", err)
+			return
+		}
+	}
+	for _, locationID := range fixture.LocationIDs {
+		if _, err := tx.Exec(ctx, `DELETE FROM ride_hailing.locations WHERE id = $1::uuid AND NOT selectable`, locationID); err != nil {
+			t.Errorf("delete lifecycle map pin: %v", err)
 			return
 		}
 	}

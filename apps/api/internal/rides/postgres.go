@@ -45,7 +45,7 @@ func (r *PostgresRepository) ListLocations(ctx context.Context) ([]pricing.Locat
 	rows, err := r.database.Query(ctx, `
 		SELECT id::text, name, area, city, latitude, longitude
 		FROM ride_hailing.locations
-		WHERE city = 'Lahore' AND active
+		WHERE city = 'Lahore' AND active AND selectable
 		ORDER BY name, id`)
 	if err != nil {
 		return nil, unavailable(err)
@@ -143,24 +143,39 @@ func (r *PostgresRepository) CreateRide(ctx context.Context, riderID string, req
 	if err != nil {
 		return Ride{}, false, err
 	}
+	pickupLocationID, err := persistEndpoint(ctx, tx, request.PickupLocationID, request.Pickup)
+	if err != nil {
+		return Ride{}, false, err
+	}
+	destinationLocationID, err := persistEndpoint(ctx, tx, request.DestinationLocationID, request.Destination)
+	if err != nil {
+		return Ride{}, false, err
+	}
 	var rideID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO ride_hailing.rides
 			(rider_id, pickup_location_id, destination_location_id, category,
 			 estimated_fare_paisa, estimated_distance_meters, pickup_eta_minutes,
-			 currency, approximate)
+			 currency, approximate, fuel_price_paisa_per_liter, fuel_price_effective_date, fuel_cost_paisa,
+			 base_fare_paisa, distance_cost_paisa, pricing_version)
 		VALUES ($1::uuid, $2::uuid, $3::uuid, $4::ride_hailing.ride_category,
-			$5, $6, $7, $8, $9)
+			$5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		RETURNING id::text`,
 		riderID,
-		request.PickupLocationID,
-		request.DestinationLocationID,
+		pickupLocationID,
+		destinationLocationID,
 		request.Category,
 		quote.EstimatedFarePaisa,
 		quote.EstimatedDistanceMeters,
 		quote.PickupETAMinutes,
 		quote.Currency,
 		quote.Approximate,
+		quote.FuelPricePaisaPerLiter,
+		quote.FuelPriceEffectiveDate,
+		quote.FuelCostPaisa,
+		quote.BaseFarePaisa,
+		quote.DistanceCostPaisa,
+		quote.PricingVersion,
 	).Scan(&rideID)
 	if err != nil {
 		return Ride{}, false, mapWriteError(err)
@@ -222,11 +237,11 @@ func (r *PostgresRepository) GetRide(ctx context.Context, rideID, actorID, actor
 }
 
 func quoteWith(ctx context.Context, runner queryRunner, request QuoteRequest, matchRadiusKM int) (pricing.Quote, error) {
-	pickup, err := lookupLocation(ctx, runner, request.PickupLocationID)
+	pickup, err := resolveEndpoint(ctx, runner, request.PickupLocationID, request.Pickup)
 	if err != nil {
 		return pricing.Quote{}, err
 	}
-	destination, err := lookupLocation(ctx, runner, request.DestinationLocationID)
+	destination, err := resolveEndpoint(ctx, runner, request.DestinationLocationID, request.Destination)
 	if err != nil {
 		return pricing.Quote{}, err
 	}
@@ -257,14 +272,72 @@ func quoteWith(ctx context.Context, runner queryRunner, request QuoteRequest, ma
 	}
 	rows.Close()
 
-	quote, err := pricing.CalculateQuote(pickup, destination, request.Category, drivers, matchRadiusKM)
+	rateCard, err := loadRateCard(ctx, runner, request.Category)
+	if err != nil {
+		return pricing.Quote{}, err
+	}
+	quote, err := pricing.CalculateQuoteWithRateCard(pickup, destination, request.Category, drivers, matchRadiusKM, rateCard)
 	if errors.Is(err, pricing.ErrUnsupportedCategory) {
 		return pricing.Quote{}, ValidationError{Message: "Category must be economy or comfort."}
 	}
 	if err != nil {
-		return pricing.Quote{}, ValidationError{Message: "Pickup and destination must be different active Lahore locations."}
+		return pricing.Quote{}, ValidationError{Message: "Pickup and destination must be different points inside the Lahore service area."}
 	}
 	return quote, nil
+}
+
+func resolveEndpoint(ctx context.Context, runner queryRunner, locationID string, input *LocationInput) (pricing.Location, error) {
+	if input == nil {
+		return lookupLocation(ctx, runner, locationID)
+	}
+	return pricing.Location{
+		Name:      input.Name,
+		Area:      input.Area,
+		City:      "Lahore",
+		Latitude:  input.Latitude,
+		Longitude: input.Longitude,
+	}, nil
+}
+
+func persistEndpoint(ctx context.Context, tx pgx.Tx, locationID string, input *LocationInput) (string, error) {
+	if input == nil {
+		return locationID, nil
+	}
+	var persistedID string
+	err := tx.QueryRow(ctx, `
+		INSERT INTO ride_hailing.locations (name, area, city, latitude, longitude, active, selectable)
+		VALUES ($1, $2, 'Lahore', $3, $4, true, false)
+		RETURNING id::text`, input.Name, input.Area, input.Latitude, input.Longitude).Scan(&persistedID)
+	if err != nil {
+		return "", unavailable(err)
+	}
+	return persistedID, nil
+}
+
+func loadRateCard(ctx context.Context, runner queryRunner, category string) (pricing.RateCard, error) {
+	var rateCard pricing.RateCard
+	err := runner.QueryRow(ctx, `
+		SELECT category::text, fuel_price_paisa_per_liter, fuel_price_effective_date,
+			fuel_efficiency_meters_per_liter, base_fare_paisa,
+			non_fuel_cost_paisa_per_km, road_distance_factor_basis_points, version
+		FROM ride_hailing.pricing_rates
+		WHERE category = $1::ride_hailing.ride_category`, category).Scan(
+		&rateCard.Category,
+		&rateCard.FuelPricePaisaPerLiter,
+		&rateCard.FuelPriceEffectiveDate,
+		&rateCard.FuelEfficiencyMetersPerLiter,
+		&rateCard.BaseFarePaisa,
+		&rateCard.NonFuelCostPaisaPerKM,
+		&rateCard.RoadDistanceFactorBPS,
+		&rateCard.Version,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return pricing.RateCard{}, unavailable(err)
+	}
+	if err != nil {
+		return pricing.RateCard{}, unavailable(err)
+	}
+	return rateCard, nil
 }
 
 func lookupLocation(ctx context.Context, runner queryRunner, locationID string) (pricing.Location, error) {
@@ -292,6 +365,9 @@ func lookupLocation(ctx context.Context, runner queryRunner, locationID string) 
 func loadRide(ctx context.Context, runner queryRunner, rideID, actorID, actorRole string) (*Ride, error) {
 	var ride Ride
 	var pickupETA pgtype.Int4
+	var fuelPrice, fuelCost, baseFare, distanceCost pgtype.Int8
+	var fuelPriceDate pgtype.Date
+	var pricingVersion pgtype.Int4
 	var assignmentID, assignmentDriverID, assignmentDriverName, assignmentStatus pgtype.Text
 	var assignmentCreatedAt pgtype.Timestamptz
 	err := runner.QueryRow(ctx, `
@@ -300,7 +376,10 @@ func loadRide(ctx context.Context, runner queryRunner, rideID, actorID, actorRol
 			p.id::text, p.name, p.area, p.city, p.latitude, p.longitude,
 			d.id::text, d.name, d.area, d.city, d.latitude, d.longitude,
 			r.category::text, r.estimated_fare_paisa, r.estimated_distance_meters,
-			r.pickup_eta_minutes, r.currency, r.approximate, r.status::text,
+			r.pickup_eta_minutes, r.currency, r.approximate,
+			r.fuel_price_paisa_per_liter, r.fuel_price_effective_date,
+			r.fuel_cost_paisa, r.base_fare_paisa,
+			r.distance_cost_paisa, r.pricing_version, r.status::text,
 			r.created_at, r.updated_at,
 			a.id::text, a.driver_id::text, du.display_name, a.status::text, a.assigned_at
 		FROM ride_hailing.rides r
@@ -333,6 +412,12 @@ func loadRide(ctx context.Context, runner queryRunner, rideID, actorID, actorRol
 		&pickupETA,
 		&ride.Currency,
 		&ride.Approximate,
+		&fuelPrice,
+		&fuelPriceDate,
+		&fuelCost,
+		&baseFare,
+		&distanceCost,
+		&pricingVersion,
 		&ride.Status,
 		&ride.CreatedAt,
 		&ride.UpdatedAt,
@@ -351,6 +436,30 @@ func loadRide(ctx context.Context, runner queryRunner, rideID, actorID, actorRol
 	if pickupETA.Valid {
 		minutes := int(pickupETA.Int32)
 		ride.PickupETAMinutes = &minutes
+	}
+	if fuelPrice.Valid {
+		value := fuelPrice.Int64
+		ride.FuelPricePaisaPerLiter = &value
+	}
+	if fuelPriceDate.Valid {
+		value := fuelPriceDate.Time
+		ride.FuelPriceEffectiveDate = &value
+	}
+	if fuelCost.Valid {
+		value := fuelCost.Int64
+		ride.FuelCostPaisa = &value
+	}
+	if baseFare.Valid {
+		value := baseFare.Int64
+		ride.BaseFarePaisa = &value
+	}
+	if distanceCost.Valid {
+		value := distanceCost.Int64
+		ride.DistanceCostPaisa = &value
+	}
+	if pricingVersion.Valid {
+		value := int(pricingVersion.Int32)
+		ride.PricingVersion = &value
 	}
 	if assignmentID.Valid {
 		ride.Assignment = &Assignment{

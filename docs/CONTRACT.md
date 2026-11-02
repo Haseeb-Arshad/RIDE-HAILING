@@ -9,7 +9,7 @@
 - Ride statuses: `requested`, `accepted`, `completed`, `cancelled`.
 - Driver statuses: `offline`, `available`, `busy`.
 - Assignment statuses: `active`, `completed`, `cancelled`. The demo creates at most one assignment row per ride and never reassigns a ride.
-- City: `Lahore` only. Location records and demo driver coordinates are seeded, fixed fixtures. Public location responses include their coordinates for map display.
+- City: `Lahore` only. Seven suggested stops and demo driver coordinates are seeded fixtures. Rider-selected pickup/destination pins must fall inside the validated Lahore service bounds; ride-specific pins are persisted but are not returned as suggested stops.
 - IDs are UUIDs. Timestamps are UTC RFC 3339 values.
 
 ### Ride transition matrix
@@ -32,7 +32,7 @@ Go accepts ES256 or RS256 access tokens and validates signature using the config
 
 The seed links three already-created Supabase Auth accounts to rider/driver profiles by normalized email. It does not create Auth users or set their passwords. Go exposes only `GET /api/v1/auth/me`; Supabase Auth handles sign-in and sign-out in the browser.
 
-All unsafe API requests require an `Origin` matching the configured application origin. Writes do not require a CSRF token because authentication uses an explicit bearer header that browsers do not attach automatically. The browser calls same-origin `/api/v1/...`; Next.js rewrites requests server-side to Go. The API origin, database URL, and demo passwords remain server-side; only the Supabase publishable key may use a `NEXT_PUBLIC_` variable.
+All unsafe API requests require an `Origin` matching one of the comma-separated configured application origins. Local development allows both `127.0.0.1` and `localhost` on port 3000; production should configure only its exact HTTPS origins. Missing or untrusted origins receive a structured `403` response. Writes do not require a CSRF token because authentication uses an explicit bearer header that browsers do not attach automatically. The browser calls same-origin `/api/v1/...`; Next.js rewrites requests server-side to Go. The API origin, database URL, and demo passwords remain server-side; only the Supabase publishable key may use a `NEXT_PUBLIC_` variable.
 
 Authorization rules:
 
@@ -50,23 +50,23 @@ Authorization rules:
 3. A driver has at most one active assignment.
 4. A driver is `busy` exactly while holding an active assignment. Acceptance and terminal release update ride, assignment, and driver rows in one PostgreSQL transaction.
 5. Ride and driver state are rechecked after acquiring locks. Acceptance locks the ride row first and then the driver row, in a consistent order, and commits assignment plus both status changes together.
-6. PostgreSQL constraints backstop one-open-ride, one-assignment-per-ride, one-active-assignment-per-driver, and idempotency-key uniqueness. A process mutex is not a concurrency guarantee.
+6. PostgreSQL constraints backstop one-open-ride, one-assignment-per-ride, one-active-assignment-per-driver, and idempotency-key uniqueness. Migration triggers reject illegal ride/assignment transitions, prevent edits to a confirmed fare snapshot, and defer cross-table checks until the transaction is complete. A process mutex is not a concurrency guarantee.
 7. Application tables live in the private `ride_hailing` schema, omitted from this repository's Supabase Data API schema list. On 2026-11-02, a request to the project's Data API for this schema returned `PGRST106` (not exposed), and PostgreSQL reported no schema usage grants for `anon`, `authenticated`, or `service_role`. RLS is enabled and forced on every table with no browser-facing policies or grants. Recheck the remote setting if project configuration changes. Go uses server-side qualified SQL, maps verified Supabase subjects to application profiles, and enforces role/ownership rules.
-8. Quote inputs contain only pickup ID, destination ID, and category. Creation recomputes distance/fare on the server and persists the quote snapshot. The client cannot select a driver or submit a trusted price.
-9. Every create request has a rider-scoped `Idempotency-Key` (1–128 visible ASCII characters) and canonical request fingerprint over the normalized pickup UUID, destination UUID, and category. Same rider/key and same fingerprint returns the same ride; the response is HTTP 200 and reflects that ride’s current persisted state. Same key with a different fingerprint is 409. A new key while the rider already has an open ride is 409.
+8. Quote/create inputs accept either saved location IDs or labeled map pins and a category. The API validates each custom coordinate against the Lahore service bounds, calculates distance and fare itself, and persists custom locations with the ride. The client cannot select a driver or submit a trusted price.
+9. Every create request has a rider-scoped `Idempotency-Key` (1–128 visible ASCII characters) and canonical request fingerprint over normalized endpoints and category. Same rider/key and same fingerprint returns the same ride; the response is HTTP 200 and reflects that ride’s current persisted state. Same key with a different fingerprint is 409. A new key while the rider already has an open ride is 409.
 
-Acceptance transaction outline: begin; lock ride `FOR UPDATE`; lock driver `FOR UPDATE`; recheck ride state, driver availability, category/city/radius, and active assignment; insert the unique assignment; update ride and driver; commit. Any failed condition rolls back without partial state. Cancellation/completion locks the ride then its assigned driver and updates all affected rows atomically.
+Acceptance transaction outline: begin; lock ride `FOR UPDATE`; lock driver `FOR UPDATE`; recheck ride state, driver availability, category/city/radius, and active assignment; insert the unique assignment; update ride and driver; commit. Any failed condition rolls back without partial state. Cancellation/completion locks the ride then its assigned driver and updates all affected rows atomically. Deferred PostgreSQL constraint triggers validate the final ride, assignment, and driver state at commit, so the service can update related rows in a safe transaction order without exposing an intermediate state.
 
 ## 4. Estimates and matching
 
-Locations and driver positions are fixed Lahore demo coordinates. Distance is Haversine straight-line distance multiplied by `1.3`, rounded to an integer meter as a rough road-distance proxy. It is not route data.
+Custom endpoints must fit the service rectangle: latitude 31.20–31.75 and longitude 73.95–74.70. Distance between supported endpoints is Haversine straight-line distance multiplied by the rate card's configurable road factor (currently `1.3`), rounded to an integer meter as a rough road-distance proxy. It is not route data.
 
-| Category | Base fare | Per estimated kilometer |
-|---|---:|---:|
-| economy | PKR 150 (15,000 paisa) | PKR 60 (6,000 paisa) |
-| comfort | PKR 250 (25,000 paisa) | PKR 90 (9,000 paisa) |
+| Category | Base fare | Fuel efficiency | Distance operating cost |
+|---|---:|---:|---:|
+| economy | PKR 150 (15,000 paisa) | 12 km/litre | PKR 28.50/km (2,850 paisa) |
+| comfort | PKR 250 (25,000 paisa) | 9 km/litre | PKR 28/km (2,800 paisa) |
 
-Fare formula uses integer paisa: `base_paisa + ceil(estimated_distance_meters * per_km_paisa / 1000)`. Currency is always `PKR`; no floating-point currency is stored. These values are illustrative demo numbers, not current or official market fares.
+The rate card is stored in `ride_hailing.pricing_rates`, including petrol price and effective date, vehicle efficiency, base fare, distance operating cost, road factor, and version. Current demo petrol price is PKR 377.91/litre, recorded as 37,791 paisa/litre, effective 2026-10-31. Fare formula uses integer paisa: `base_paisa + ceil(distance_meters * fuel_price_paisa_per_litre / efficiency_meters_per_litre) + ceil(distance_meters * non_fuel_cost_paisa_per_km / 1000)`. Currency is always `PKR`; no floating-point currency is stored. The rate is manually maintained and the entire breakdown is snapshotted on each ride; it is not an automatic or market-calibrated quote.
 
 An eligible driver is in Lahore, `available`, category-compatible, and within the configurable demo radius (default 20 km) of the pickup using the same approximate distance method. Quote ETA uses the nearest eligible driver at an illustrative 25 km/h and a two-minute minimum: `max(2, ceil(estimated_driver_distance_meters * 60 / 25000))`. If no eligible driver exists, `pickup_eta_minutes` is `null`. ETA is an estimate, not a dispatch promise.
 

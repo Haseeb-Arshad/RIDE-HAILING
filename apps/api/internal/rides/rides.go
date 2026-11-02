@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -32,9 +34,18 @@ type ValidationError struct {
 func (e ValidationError) Error() string { return e.Message }
 
 type QuoteRequest struct {
-	PickupLocationID      string `json:"pickup_location_id"`
-	DestinationLocationID string `json:"destination_location_id"`
-	Category              string `json:"category"`
+	PickupLocationID      string         `json:"pickup_location_id,omitempty"`
+	DestinationLocationID string         `json:"destination_location_id,omitempty"`
+	Pickup                *LocationInput `json:"pickup,omitempty"`
+	Destination           *LocationInput `json:"destination,omitempty"`
+	Category              string         `json:"category"`
+}
+
+type LocationInput struct {
+	Name      string  `json:"name"`
+	Area      string  `json:"area"`
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
 }
 
 type RiderSummary struct {
@@ -59,6 +70,12 @@ type Ride struct {
 	EstimatedFarePaisa      int64            `json:"estimated_fare_paisa"`
 	EstimatedDistanceMeters int64            `json:"estimated_distance_meters"`
 	PickupETAMinutes        *int             `json:"pickup_eta_minutes"`
+	FuelPricePaisaPerLiter  *int64           `json:"fuel_price_paisa_per_liter,omitempty"`
+	FuelPriceEffectiveDate  *time.Time       `json:"fuel_price_effective_date,omitempty"`
+	FuelCostPaisa           *int64           `json:"fuel_cost_paisa,omitempty"`
+	BaseFarePaisa           *int64           `json:"base_fare_paisa,omitempty"`
+	DistanceCostPaisa       *int64           `json:"distance_cost_paisa,omitempty"`
+	PricingVersion          *int             `json:"pricing_version,omitempty"`
 	Currency                string           `json:"currency"`
 	Approximate             bool             `json:"approximate"`
 	Status                  string           `json:"status"`
@@ -148,8 +165,17 @@ func (s *Service) CreateRide(ctx context.Context, riderID string, rawRequest Quo
 	if !validIdempotencyKey(idempotencyKey) {
 		return Ride{}, false, ValidationError{Message: "Idempotency-Key must contain 1 to 128 visible ASCII characters."}
 	}
-	canonicalRequest := request.PickupLocationID + "\n" + request.DestinationLocationID + "\n" + request.Category
-	requestHash := sha256.Sum256([]byte(canonicalRequest))
+	var canonicalRequest []byte
+	if request.Pickup == nil && request.Destination == nil {
+		// Preserve the fingerprint format used by existing pending demo attempts.
+		canonicalRequest = []byte(request.PickupLocationID + "\n" + request.DestinationLocationID + "\n" + request.Category)
+	} else {
+		canonicalRequest, err = json.Marshal(request)
+		if err != nil {
+			return Ride{}, false, ErrStoreUnavailable
+		}
+	}
+	requestHash := sha256.Sum256(canonicalRequest)
 	ride, replay, err := s.repository.CreateRide(ctx, riderID, request, idempotencyKey, requestHash[:], s.matchRadiusKM)
 	if err != nil {
 		return Ride{}, false, err
@@ -227,18 +253,51 @@ func (s *Service) CompleteRide(ctx context.Context, rideID, driverID string) (Ri
 }
 
 func normalizeRequest(request QuoteRequest) (QuoteRequest, error) {
-	pickupID, pickupValid := normalizeUUID(request.PickupLocationID)
-	destinationID, destinationValid := normalizeUUID(request.DestinationLocationID)
+	pickupID, pickup, pickupValid := normalizeEndpoint(request.PickupLocationID, request.Pickup)
+	destinationID, destination, destinationValid := normalizeEndpoint(request.DestinationLocationID, request.Destination)
 	if !pickupValid || !destinationValid {
-		return QuoteRequest{}, ValidationError{Message: "Pickup and destination must be valid location IDs."}
+		return QuoteRequest{}, ValidationError{Message: "Choose a saved Lahore stop or provide a labeled map pin inside the Lahore service area for each end of the trip."}
 	}
-	if pickupID == destinationID {
+	if pickupID != "" && pickupID == destinationID {
+		return QuoteRequest{}, ValidationError{Message: "Pickup and destination must be different locations."}
+	}
+	if pickup != nil && destination != nil && math.Abs(pickup.Latitude-destination.Latitude) < 0.000001 && math.Abs(pickup.Longitude-destination.Longitude) < 0.000001 {
 		return QuoteRequest{}, ValidationError{Message: "Pickup and destination must be different locations."}
 	}
 	if request.Category != "economy" && request.Category != "comfort" {
 		return QuoteRequest{}, ValidationError{Message: "Category must be economy or comfort."}
 	}
-	return QuoteRequest{PickupLocationID: pickupID, DestinationLocationID: destinationID, Category: request.Category}, nil
+	return QuoteRequest{PickupLocationID: pickupID, DestinationLocationID: destinationID, Pickup: pickup, Destination: destination, Category: request.Category}, nil
+}
+
+func normalizeEndpoint(locationID string, input *LocationInput) (string, *LocationInput, bool) {
+	if locationID != "" {
+		if input != nil {
+			return "", nil, false
+		}
+		normalizedID, valid := normalizeUUID(locationID)
+		return normalizedID, nil, valid
+	}
+	if input == nil || !pricing.IsInLahoreServiceArea(input.Latitude, input.Longitude) {
+		return "", nil, false
+	}
+	name := strings.TrimSpace(input.Name)
+	if name == "" {
+		name = "Map pin"
+	}
+	area := strings.TrimSpace(input.Area)
+	if area == "" {
+		area = "Lahore"
+	}
+	if len([]rune(name)) > 120 || len([]rune(area)) > 120 || strings.ContainsRune(name, '\u0000') || strings.ContainsRune(area, '\u0000') {
+		return "", nil, false
+	}
+	return "", &LocationInput{
+		Name:      name,
+		Area:      area,
+		Latitude:  math.Round(input.Latitude*1_000_000) / 1_000_000,
+		Longitude: math.Round(input.Longitude*1_000_000) / 1_000_000,
+	}, true
 }
 
 func normalizeUUID(value string) (string, bool) {

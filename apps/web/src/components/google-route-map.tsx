@@ -23,11 +23,25 @@ type GoogleRouteMapProps = {
   locations: Location[];
   pickupID: string;
   destinationID: string;
+  pickupCustom?: Location | null;
+  destinationCustom?: Location | null;
+  selectionTarget?: "pickup" | "destination" | null;
+  onMapPointSelected?(point: { latitude: number; longitude: number }): void;
+  onMapPointRejected?(): void;
 };
 
 type MapState = "missing-key" | "loading" | "ready" | "error";
 
-export function GoogleRouteMap({ locations, pickupID, destinationID }: GoogleRouteMapProps) {
+export function GoogleRouteMap({
+  locations,
+  pickupID,
+  destinationID,
+  pickupCustom = null,
+  destinationCustom = null,
+  selectionTarget = null,
+  onMapPointSelected,
+  onMapPointRejected,
+}: GoogleRouteMapProps) {
   const hasCompleteRoute = pickupID !== "" && destinationID !== "";
   const canvasRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<google.maps.Map | null>(null);
@@ -71,8 +85,9 @@ export function GoogleRouteMap({ locations, pickupID, destinationID }: GoogleRou
     markersRef.current.forEach((marker) => marker.setMap(null));
     markersRef.current = [];
 
-    const selectedLocations = locations.filter((location) => location.id === pickupID || location.id === destinationID);
-    const visibleLocations = hasCompleteRoute && selectedLocations.length > 0 ? selectedLocations : locations;
+    const allLocations = [...locations, ...(pickupCustom ? [pickupCustom] : []), ...(destinationCustom ? [destinationCustom] : [])];
+    const selectedLocations = allLocations.filter((location) => location.id === pickupID || location.id === destinationID);
+    const visibleLocations = hasCompleteRoute && selectedLocations.length > 0 ? selectedLocations : allLocations;
     const bounds = new google.maps.LatLngBounds();
 
     for (const location of visibleLocations) {
@@ -109,7 +124,31 @@ export function GoogleRouteMap({ locations, pickupID, destinationID }: GoogleRou
       map.setCenter(lahoreCenter);
       map.setZoom(11);
     }
-  }, [destinationID, hasCompleteRoute, locations, pickupID, state]);
+  }, [destinationCustom, destinationID, hasCompleteRoute, locations, pickupCustom, pickupID, state]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || state !== "ready" || !selectionTarget || !onMapPointSelected) return;
+
+    map.setOptions({ draggableCursor: "crosshair" });
+    const listener = map.addListener("click", (event: google.maps.MapMouseEvent) => {
+      if (!event.latLng) return;
+      const point = { latitude: event.latLng.lat(), longitude: event.latLng.lng() };
+      if (
+        point.latitude < 31.2 || point.latitude > 31.75 ||
+        point.longitude < 73.95 || point.longitude > 74.7
+      ) {
+        onMapPointRejected?.();
+        return;
+      }
+      onMapPointSelected(point);
+    });
+
+    return () => {
+      listener.remove();
+      map.setOptions({ draggableCursor: null });
+    };
+  }, [onMapPointRejected, onMapPointSelected, selectionTarget, state]);
 
   return (
     <section className="google-map-card" aria-label="Google Maps route preview">
@@ -120,7 +159,12 @@ export function GoogleRouteMap({ locations, pickupID, destinationID }: GoogleRou
         </span>
       </div>
       <div className={`google-map-surface map-surface-${state}`}>
-        <div className="google-map-canvas" ref={canvasRef} style={{ visibility: state === "ready" ? "visible" : "hidden" }} aria-hidden={state !== "ready"} aria-label="Map showing selected Lahore pickup points" />
+        <div className="google-map-canvas" ref={canvasRef} style={{ visibility: state === "ready" ? "visible" : "hidden" }} aria-hidden={state !== "ready"} aria-label="Map displaying route locations across Lahore" />
+      {state === "ready" && selectionTarget && (
+        <div className="map-selection-banner" role="status">
+          Click inside Lahore to set your {selectionTarget === "pickup" ? "pickup" : "destination"} pin.
+        </div>
+      )}
       {state === "ready" ? null : state === "loading" ? (
         <div className="google-map-message" role="status" aria-busy="true">
           <span className="loading-mark" aria-hidden="true" />
@@ -147,7 +191,7 @@ export function GoogleRouteMap({ locations, pickupID, destinationID }: GoogleRou
       <div className="google-map-legend" aria-label="Map markers">
         {pickupID && <span><i className="legend-dot legend-pickup" />Pickup</span>}
         {destinationID && <span><i className="legend-dot legend-destination" />Destination</span>}
-        {!pickupID && !destinationID && <span><i className="legend-dot legend-stop" />Seeded stops</span>}
+        {!pickupID && !destinationID && <span><i className="legend-dot legend-stop" />Suggested stops</span>}
         {Boolean(pickupID || destinationID) && !hasCompleteRoute && <span><i className="legend-dot legend-stop" />Other demo stops</span>}
       </div>
     </section>

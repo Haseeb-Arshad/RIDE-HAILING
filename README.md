@@ -4,7 +4,7 @@ A focused ride-booking demo for Lahore. The Next.js app presents rider and drive
 
 ## Project status
 
-The connected demo was verified against the supplied Supabase project on 2026-11-02. Both application migrations were applied, the seed linked three Auth accounts and added seven Lahore locations plus two driver profiles, the PostgreSQL integration suite passed, and the Playwright rider-to-driver journey passed. Web lint, 19 frontend tests, the production build, Go tests, and the GitHub API/web checks also passed.
+The connected demo was verified against the supplied Supabase project on 2026-11-02. Application migrations are applied, the seed links three Auth accounts and adds seven suggested Lahore locations plus two driver profiles, and the current revision's PostgreSQL suite and Playwright rider-to-driver journey pass. The journey was also rerun through the open local app after refreshing its API connection. This revision adds database lifecycle guards, map-selected trip endpoints across a Lahore service area, fuel-based fares, and structured origin errors; the technical assessment response records the exact checks.
 
 These checks prove the current demo flow against this project configuration; they do not establish production readiness. Re-run the database integration and browser checks after relevant code, schema, or Auth configuration changes. Local unit and UI tests can run without a database. GitHub Actions does not connect to Supabase, so its green checks are not a substitute for the PostgreSQL integration run.
 
@@ -42,7 +42,7 @@ Prerequisites: Go 1.26 or newer, Node.js 20.9 or newer, and npm. The Go module s
    go run ./cmd/seed
    ```
 
-The seed links existing Supabase Auth users to application profiles by email and inserts seven fixed Lahore locations. It never creates or resets Supabase passwords. The seed is transactional and safe to repeat; it does not reset a driver's saved availability. A missing Auth account stops the seed with a setup message.
+The seed links existing Supabase Auth users to application profiles by email and inserts seven suggested Lahore locations. Riders may also pin any pickup and destination inside the configured Lahore service bounds; those ride-specific pins are saved for the trip but do not become suggested stops. The seed never creates or resets Supabase passwords. It is transactional and safe to repeat; it does not reset a driver's saved availability. A missing Auth account stops the seed with a setup message.
 
 For a persistent API, use the direct database connection when IPv6 is available or Supavisor session mode on IPv4-only networks. Transaction-mode pooling is intended for transient clients and does not support prepared statements. See the [Supabase PostgreSQL connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres). Never commit `.env` or expose the connection string through a `NEXT_PUBLIC_` variable.
 
@@ -65,13 +65,32 @@ npm run dev
 
 Open <http://127.0.0.1:3000>. The API listens on <http://127.0.0.1:8080>; liveness is `/healthz` and PostgreSQL readiness is `/readyz`. The Next.js rewrite uses the server-only `API_ORIGIN` setting. With no database connection, liveness remains available while readiness and database-backed API routes return `503`.
 
+For local browser actions, `APP_ORIGIN` explicitly allows both `http://127.0.0.1:3000` and `http://localhost:3000`. If you use another host or port, add its exact origin as a comma-separated entry in the ignored root `.env` and restart the Go API. Missing and untrusted origins receive a structured error. If you change `API_ORIGIN` in `apps/web/.env.local`, restart Next.js so its API rewrites point to the new Go process.
+
 ## Google Maps preview
 
-The rider workspace has a conditional Google Maps JavaScript preview for the seven seeded Lahore locations and selected pickup and destination. The API returns each public demo location's latitude and longitude for this purpose. Without a browser key, the UI shows its setup state; booking still uses the seeded locations and approximate Go estimates.
+The rider workspace uses Google Maps JavaScript to show the seven suggested Lahore stops and lets a rider select custom pickup and destination pins anywhere inside the Lahore service bounds (31.20–31.75° N, 73.95–74.70° E). The API checks the same bounds, stores selected pins with the ride, and excludes them from the suggested-stop list. A browser-restricted Maps JavaScript key is required for the map; booking and fare calculation remain available only when the Go API and PostgreSQL are configured.
 
 To enable the preview, add `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` to the ignored `apps/web/.env.local` and restart Next.js. For a standard Google Cloud project, enable the Maps JavaScript API, configure billing, and restrict the browser key to the web origins and APIs it needs. A browser key is visible to visitors by design; never put a server key in a `NEXT_PUBLIC_` variable. See Google's [Maps JavaScript API setup](https://developers.google.com/maps/documentation/javascript/get-api-key) and [API key security guidance](https://developers.google.com/maps/api-security-best-practices).
 
-The map currently shows seeded stops only. It does not search arbitrary addresses, calculate road directions, or show live driver positions. Google Places and the server-side Routes API can be added in the next integration step; that will also require replacing the fixed-location-only quote and ride contract.
+The fare estimate uses Haversine distance × a configurable 1.3 road factor, then `base fare + estimated fuel cost + distance operating cost`. Fuel cost is rounded up from `distance × petrol price per litre ÷ vehicle efficiency`; the rate card, effective date, vehicle efficiency, base fare, operating cost, and road factor are stored in `ride_hailing.pricing_rates`. The returned fare breakdown is snapshotted with each ride, so later rate changes do not rewrite an existing quote. The seeded petrol rate is PKR 377.91/litre effective 31 October 2026, based on [PSO's fuel rates](https://www.psopk.com/en/fuels/fuel-prices) and the [reported rate through 2 November](https://www.dawn.com/news/2040998/petrol-price-unchanged-high-speed-diesel-raised-by-rs229). Rates are manually maintained by an authorized database operator; the app does not automatically fetch fuel prices.
+
+To record a new petrol price, use the Supabase SQL editor or another trusted PostgreSQL admin connection and update both categories in one transaction. Values are integer paisa per litre; the database trigger increments the rate-card version and update timestamp:
+
+```sql
+begin;
+
+update ride_hailing.pricing_rates
+set fuel_price_paisa_per_liter = 40000,
+    fuel_price_effective_date = current_date
+where category in ('economy', 'comfort');
+
+commit;
+```
+
+Replace `40000` and `current_date` with the officially announced value and effective date. New quotes use the updated card; existing ride snapshots remain unchanged.
+
+The map-pin flow does not provide Places address search, road-aware directions, traffic-aware distance, or live driver positions. Its distance, ETA, and fare are explicitly approximate. Google Places and the server-side Routes API remain possible later integrations.
 
 ## Checks
 
@@ -110,13 +129,13 @@ Set-Location apps/web
 npm run test:e2e
 ```
 
-The browser journey requires a migrated and seeded database, the public Supabase web settings, and the `E2E_RIDER_*` and `E2E_DRIVER_*` credentials in the ignored root `.env`. It first completes any existing assignment on the dedicated demo driver account so reruns start from a usable state. The test leaves completed demo ride records in Supabase. Component tests use API mocks and demonstrate UI behavior only; they do not prove PostgreSQL persistence.
+The browser journey requires a migrated and seeded database, the public Supabase web settings, and the `E2E_RIDER_*` and `E2E_DRIVER_*` credentials in the ignored root `.env`. It completes any existing assignment on the dedicated demo driver account and cancels a leftover open test-rider booking so reruns start from a usable state. The test leaves completed/cancelled demo ride records in Supabase. Component tests use API mocks and demonstrate UI behavior only; they do not prove PostgreSQL persistence.
 
 The GitHub Actions workflow runs Go format, unit/HTTP tests and vet, plus frontend tests, lint, type checking, and production build. It does not connect to PostgreSQL, so database integration tests skip there unless a separate database test job is configured.
 
 ## Boundaries
 
-Fares and distances use fixed Lahore demo locations and illustrative calculations. Driver coordinates are static. The app does not include live GPS, road routing, payments, notifications, reassignment, production dispatch, or a hosted deployment. Active ride and driver pages poll; the app does not use WebSockets, Redis, or Kafka.
+Fares use manually maintained rate cards and approximate map-pin distances within the Lahore demo service bounds. Driver coordinates are static. The app does not include live GPS, road routing, payments, notifications, reassignment, production dispatch, or a hosted deployment. Active ride and driver pages poll; the app does not use WebSockets, Redis, or Kafka.
 
 AI tools were used for implementation and documentation support. The repository owner remains responsible for review, credentials, and verification.
 
@@ -129,5 +148,6 @@ AI tools were used for implementation and documentation support. The repository 
 - [Current limitations and unverified checks](docs/LIMITATIONS.md)
 - [Technical assessment response (PDF)](output/pdf/technical-assessment-response.pdf)
 - [Technical assessment response (Markdown)](docs/TECHNICAL_ASSESSMENT_RESPONSE.md)
+- Rebuild the PDF after editing the response with `python scripts/build-assessment-pdf.py`.
 - [OpenAPI contract](docs/openapi.yaml)
 - [Continuous integration checks](.github/workflows/ci.yml)

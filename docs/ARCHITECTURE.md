@@ -53,7 +53,7 @@ Terminal states have no outgoing transition. An accepted ride's cancellation or 
 4. Insert the unique assignment and update ride to `accepted` and driver to `busy`.
 5. Commit all changes. Any failed precondition rolls the transaction back.
 
-Unique constraints protect one assignment per ride and one active assignment per driver. A partial unique index protects one open ride per rider. These database rules work across API processes; a Go mutex does not. Cancellation and completion use the same lock order and update all related rows atomically.
+Unique constraints protect one assignment per ride and one active assignment per driver. A partial unique index protects one open ride per rider. Lifecycle triggers reject invalid transitions and edits to the persisted quote; deferred consistency triggers require accepted/completed rides, assignments, and driver availability to agree at commit. These database rules work across API processes; a Go mutex does not. Cancellation and completion use the same lock order and update all related rows atomically.
 
 ## Retries and duplicate requests
 
@@ -95,6 +95,6 @@ sequenceDiagram
 
 ## Demo boundaries
 
-Current planned behavior uses fixed Lahore coordinates, Haversine distance multiplied by 1.3, illustrative category fares, a 20 km configurable matching radius, and a nearest-driver ETA at an illustrative 25 km/h. Active pages poll every 2–3 seconds. These choices support a deterministic demo; they do not provide routing, live GPS, dispatch guarantees, payment, or real-market fare data.
+Riders can use seeded Lahore stops or place custom pins within the configured service bounds. The API calculates approximate Haversine distance using a configurable road factor and a manually maintained fare card with petrol price/effective date, vehicle efficiency, base fare, and operating cost. Each ride stores the fare breakdown as an immutable snapshot. Matching still uses static driver coordinates, a configurable 20 km radius, and a nearest-driver ETA at an illustrative 25 km/h. Active pages poll every 2–3 seconds. These choices support a deterministic demo; they do not provide road routing, live GPS, dispatch guarantees, payment, or automatic fuel-price updates.
 
 Redis/GEOSEARCH or PostGIS, live location updates, WebSockets/SSE, event brokers, service extraction, payments, and production deployment are future evolution only. They are not part of this assessment runtime.

@@ -4,8 +4,10 @@ info:
   version: 0.1.0
   description: >-
     Contract for the assessment demo. The Go API is authoritative for
-    identity, fare, eligibility, assignment, and ride state. Estimates use
-    fixed Lahore demo coordinates and are approximate. Supabase Auth issues
+    identity, fare, eligibility, assignment, and ride state. Riders may choose
+    saved stops or labeled map pins inside Lahore service bounds. Fare and
+    distance use a manually maintained fuel rate card and remain approximate.
+    Supabase Auth issues
     access tokens; the Go API validates asymmetric JWTs and reads role/profile
     data from PostgreSQL.
 servers:
@@ -17,7 +19,7 @@ tags:
   - name: Authentication
     description: Current application profile resolved from a verified Supabase access token.
   - name: Locations and quotes
-    description: Seeded Lahore locations and server-calculated estimates.
+    description: Suggested Lahore stops, map-pin inputs, and server-calculated estimates.
   - name: Rider rides
     description: Rider-owned quote, booking, status, and cancellation operations.
   - name: Driver
@@ -73,11 +75,11 @@ paths:
     get:
       operationId: listLocations
       tags: [Locations and quotes]
-      summary: List seeded Lahore locations
+      summary: List suggested Lahore locations
       security: [{ SupabaseBearer: [] }]
       responses:
         '200':
-          description: Seeded locations available to authenticated users.
+          description: Suggested stops available to authenticated users. Private ride pins are not included.
           content:
             application/json:
               schema:
@@ -95,7 +97,10 @@ paths:
       operationId: createQuote
       tags: [Locations and quotes]
       summary: Calculate a server-side approximate fare and pickup ETA
-      description: Rider only. Does not create a ride. Quote is illustrative and is recomputed on ride creation.
+      description: >-
+        Rider only. Does not create a ride. For each endpoint, provide either a
+        seeded location ID or a labeled coordinate pin inside the Lahore service
+        area. Quote uses the versioned SQL fare card and is recomputed on creation.
       security: [{ SupabaseBearer: [] }]
       parameters:
         - $ref: '#/components/parameters/OriginHeader'
@@ -118,6 +123,12 @@ paths:
                 estimated_fare_paisa: 23676
                 estimated_distance_meters: 1446
                 pickup_eta_minutes: 2
+                fuel_price_paisa_per_liter: 37791
+                fuel_price_effective_date: '2026-10-31T00:00:00Z'
+                fuel_cost_paisa: 4554
+                base_fare_paisa: 15000
+                distance_cost_paisa: 4122
+                pricing_version: 1
                 currency: PKR
                 approximate: true
         '401': { $ref: '#/components/responses/Unauthorized' }
@@ -178,6 +189,12 @@ paths:
                 estimated_fare_paisa: 23676
                 estimated_distance_meters: 1446
                 pickup_eta_minutes: 2
+                fuel_price_paisa_per_liter: 37791
+                fuel_price_effective_date: '2026-10-31T00:00:00Z'
+                fuel_cost_paisa: 4554
+                base_fare_paisa: 15000
+                distance_cost_paisa: 4122
+                pricing_version: 1
                 currency: PKR
                 approximate: true
                 status: requested
@@ -208,6 +225,12 @@ paths:
                 estimated_fare_paisa: 23676
                 estimated_distance_meters: 1446
                 pickup_eta_minutes: 2
+                fuel_price_paisa_per_liter: 37791
+                fuel_price_effective_date: '2026-10-31T00:00:00Z'
+                fuel_cost_paisa: 4554
+                base_fare_paisa: 15000
+                distance_cost_paisa: 4122
+                pricing_version: 1
                 currency: PKR
                 approximate: true
                 status: requested
@@ -467,7 +490,7 @@ components:
       name: Origin
       in: header
       required: true
-      description: Must exactly match the configured application origin for unsafe requests.
+      description: Must match one of the comma-separated APP_ORIGIN entries for unsafe requests.
       schema: { type: string, format: uri }
     RideId:
       name: id
@@ -543,17 +566,35 @@ components:
         city: { type: string, const: Lahore }
         latitude: { type: number, format: double, minimum: -90, maximum: 90 }
         longitude: { type: number, format: double, minimum: -180, maximum: 180 }
+    LocationPinInput:
+      type: object
+      additionalProperties: false
+      required: [name, area, latitude, longitude]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 120 }
+        area: { type: string, minLength: 1, maxLength: 120 }
+        latitude: { type: number, format: double, minimum: 31.2, maximum: 31.75 }
+        longitude: { type: number, format: double, minimum: 73.95, maximum: 74.7 }
     QuoteRequest:
       type: object
       additionalProperties: false
-      required: [pickup_location_id, destination_location_id, category]
+      required: [category]
       properties:
         pickup_location_id: { type: string, format: uuid }
         destination_location_id: { type: string, format: uuid }
+        pickup: { $ref: '#/components/schemas/LocationPinInput' }
+        destination: { $ref: '#/components/schemas/LocationPinInput' }
         category: { $ref: '#/components/schemas/Category' }
+      allOf:
+        - oneOf:
+            - required: [pickup_location_id]
+            - required: [pickup]
+        - oneOf:
+            - required: [destination_location_id]
+            - required: [destination]
     Quote:
       type: object
-      required: [estimated_fare_paisa, estimated_distance_meters, pickup_eta_minutes, currency, approximate]
+      required: [estimated_fare_paisa, estimated_distance_meters, pickup_eta_minutes, fuel_price_paisa_per_liter, fuel_price_effective_date, fuel_cost_paisa, base_fare_paisa, distance_cost_paisa, pricing_version, currency, approximate]
       properties:
         estimated_fare_paisa: { type: integer, format: int64, minimum: 0 }
         estimated_distance_meters: { type: integer, format: int64, minimum: 1 }
@@ -561,6 +602,12 @@ components:
           oneOf:
             - { type: integer, minimum: 2 }
             - { type: 'null' }
+        fuel_price_paisa_per_liter: { type: integer, format: int64, minimum: 1 }
+        fuel_price_effective_date: { type: string, format: date-time }
+        fuel_cost_paisa: { type: integer, format: int64, minimum: 0 }
+        base_fare_paisa: { type: integer, format: int64, minimum: 0 }
+        distance_cost_paisa: { type: integer, format: int64, minimum: 0 }
+        pricing_version: { type: integer, minimum: 1 }
         currency: { type: string, const: PKR }
         approximate: { type: boolean, const: true }
     AssignmentStatus:
@@ -596,6 +643,12 @@ components:
           oneOf:
             - { type: integer, minimum: 2 }
             - { type: 'null' }
+        fuel_price_paisa_per_liter: { type: integer, format: int64, minimum: 1 }
+        fuel_price_effective_date: { type: string, format: date-time }
+        fuel_cost_paisa: { type: integer, format: int64, minimum: 0 }
+        base_fare_paisa: { type: integer, format: int64, minimum: 0 }
+        distance_cost_paisa: { type: integer, format: int64, minimum: 0 }
+        pricing_version: { type: integer, minimum: 1 }
         currency: { type: string, const: PKR }
         approximate: { type: boolean, const: true }
         status: { $ref: '#/components/schemas/RideStatus' }

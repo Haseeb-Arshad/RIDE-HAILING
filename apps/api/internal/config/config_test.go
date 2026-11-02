@@ -40,3 +40,31 @@ func TestMatchRadiusDefaultsAndValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestAppOriginAllowlistAcceptsLocalhostAliasesAndRejectsInvalidEntries(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		value   string
+		wantErr bool
+	}{
+		{name: "single origin", value: "http://127.0.0.1:3000"},
+		{name: "two local origins", value: "http://127.0.0.1:3000, http://localhost:3000"},
+		{name: "invalid entry", value: "http://127.0.0.1:3000,https://example.com/path", wantErr: true},
+		{name: "empty entry", value: "http://127.0.0.1:3000,", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("PORT", "8080")
+			t.Setenv("DATABASE_URL", "")
+			t.Setenv("SUPABASE_URL", "")
+			t.Setenv("APP_ORIGIN", test.value)
+			t.Setenv("DEMO_SEED_ENABLED", "false")
+			t.Setenv("REQUEST_TIMEOUT", "10s")
+			t.Setenv("MATCH_RADIUS_KM", "20")
+
+			_, err := Load()
+			if (err != nil) != test.wantErr {
+				t.Fatalf("Load error = %v, wantErr=%t", err, test.wantErr)
+			}
+		})
+	}
+}

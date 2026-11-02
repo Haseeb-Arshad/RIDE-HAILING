@@ -24,15 +24,30 @@ export type Location = {
 };
 
 export type QuoteInput = {
-  pickup_location_id: string;
-  destination_location_id: string;
+  pickup_location_id?: string;
+  destination_location_id?: string;
+  pickup?: LocationInput;
+  destination?: LocationInput;
   category: Category;
+};
+
+export type LocationInput = {
+  name: string;
+  area: string;
+  latitude: number;
+  longitude: number;
 };
 
 export type Quote = {
   estimated_fare_paisa: number;
   estimated_distance_meters: number;
   pickup_eta_minutes: number | null;
+  fuel_price_paisa_per_liter: number;
+  fuel_price_effective_date: string;
+  fuel_cost_paisa: number;
+  base_fare_paisa: number;
+  distance_cost_paisa: number;
+  pricing_version: number;
   currency: "PKR";
   approximate: true;
 };
@@ -54,6 +69,12 @@ export type Ride = {
   estimated_fare_paisa: number;
   estimated_distance_meters: number;
   pickup_eta_minutes: number | null;
+  fuel_price_paisa_per_liter?: number;
+  fuel_price_effective_date?: string;
+  fuel_cost_paisa?: number;
+  base_fare_paisa?: number;
+  distance_cost_paisa?: number;
+  pricing_version?: number;
   currency: "PKR";
   approximate: true;
   status: RideStatus;
@@ -92,10 +113,13 @@ export class ApiError extends Error {
   constructor(
     public readonly status: number,
     public readonly code: string,
-    message: string,
+    message: unknown,
     public readonly requestId?: string,
   ) {
-    super(message);
+    const safeMessage = typeof message === "string" && message.trim().length > 0
+      ? message
+      : "The service returned an unreadable error. Please try again.";
+    super(safeMessage);
     this.name = "ApiError";
   }
 }
@@ -159,13 +183,21 @@ async function request<T>(path: string, options: RequestOptions = {}): Promise<T
   if (response.status === 204) return undefined as T;
 
   if (!response.ok) {
-    const error = payload as ApiErrorBody | undefined;
-    const code = error?.error?.code ?? "request_failed";
-    const message = error?.error?.message ?? `The request failed (${response.status}).`;
+    const rawError = (payload as { error?: unknown } | undefined)?.error;
+    const error = rawError !== null && typeof rawError === "object"
+      ? rawError as Record<string, unknown>
+      : undefined;
+    const code = typeof error?.code === "string" && error.code.trim().length > 0
+      ? error.code
+      : "request_failed";
+    const message = typeof error?.message === "string" && error.message.trim().length > 0
+      ? error.message
+      : `The request failed (${response.status}).`;
+    const requestId = typeof error?.request_id === "string" ? error.request_id : undefined;
     if (response.status === 401 && typeof window !== "undefined") {
       window.dispatchEvent(new Event("ride:unauthorized"));
     }
-    throw new ApiError(response.status, code, message, error?.error?.request_id);
+    throw new ApiError(response.status, code, message, requestId);
   }
 
   return payload as T;

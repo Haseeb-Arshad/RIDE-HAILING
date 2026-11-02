@@ -100,28 +100,46 @@ func TestAuthLoginAndLogoutRoutesAreNotOwnedByGo(t *testing.T) {
 	}
 }
 
-func TestOriginCheckRemainsOnAuthenticatedWrites(t *testing.T) {
+func TestOriginCheckAllowsConfiguredLocalAliasesAndRejectsMissingOrUntrustedOrigins(t *testing.T) {
 	handled := false
-	handlers := newAuthHandlers(newHTTPAuthService(newHTTPAuthRepository(t)), testAppOrigin)
+	handlers := newAuthHandlers(newHTTPAuthService(newHTTPAuthRepository(t)), "http://127.0.0.1:3000,http://localhost:3000")
 	next := handlers.requireOrigin(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		handled = true
 		w.WriteHeader(http.StatusNoContent)
 	}))
 
-	badOrigin := httptest.NewRequest(http.MethodPost, "/api/v1/rides", nil)
-	badOrigin.Header.Set("Origin", "https://attacker.example")
-	badResponse := httptest.NewRecorder()
-	next.ServeHTTP(badResponse, badOrigin)
-	if badResponse.Code != http.StatusForbidden || handled {
-		t.Fatalf("untrusted origin status=%d, next handler called=%v", badResponse.Code, handled)
+	for _, test := range []struct {
+		name       string
+		origin     string
+		wantCode   string
+		wantStatus int
+	}{
+		{name: "missing origin", wantCode: "origin_missing", wantStatus: http.StatusForbidden},
+		{name: "untrusted origin", origin: "https://attacker.example", wantCode: "origin_forbidden", wantStatus: http.StatusForbidden},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handled = false
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/rides", nil)
+			if test.origin != "" {
+				request.Header.Set("Origin", test.origin)
+			}
+			response := httptest.NewRecorder()
+			next.ServeHTTP(response, request)
+			if response.Code != test.wantStatus || handled || !strings.Contains(response.Body.String(), test.wantCode) {
+				t.Fatalf("origin=%q status=%d handled=%t body=%s", test.origin, response.Code, handled, response.Body.String())
+			}
+		})
 	}
 
-	goodOrigin := httptest.NewRequest(http.MethodPost, "/api/v1/rides", nil)
-	goodOrigin.Header.Set("Origin", testAppOrigin)
-	goodResponse := httptest.NewRecorder()
-	next.ServeHTTP(goodResponse, goodOrigin)
-	if goodResponse.Code != http.StatusNoContent || !handled {
-		t.Fatalf("trusted origin status=%d, next handler called=%v", goodResponse.Code, handled)
+	for _, origin := range []string{"http://127.0.0.1:3000", "http://localhost:3000"} {
+		handled = false
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/rides", nil)
+		request.Header.Set("Origin", origin)
+		response := httptest.NewRecorder()
+		next.ServeHTTP(response, request)
+		if response.Code != http.StatusNoContent || !handled {
+			t.Errorf("trusted origin %q status=%d, next handler called=%v", origin, response.Code, handled)
+		}
 	}
 }
 

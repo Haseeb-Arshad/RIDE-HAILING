@@ -16,6 +16,9 @@ func TestCalculateQuoteUsesDocumentedDistanceAndFareRounding(t *testing.T) {
 	if economy.EstimatedDistanceMeters != 1446 || economy.EstimatedFarePaisa != 23_676 {
 		t.Fatalf("economy quote = distance %d fare %d, want distance 1446 and fare 23676", economy.EstimatedDistanceMeters, economy.EstimatedFarePaisa)
 	}
+	if economy.FuelPricePaisaPerLiter != 37_791 || economy.FuelCostPaisa != 4_554 || economy.BaseFarePaisa != 15_000 || economy.DistanceCostPaisa != 4_122 {
+		t.Fatalf("economy fare breakdown = fuel price %d, fuel %d, base %d, distance %d", economy.FuelPricePaisaPerLiter, economy.FuelCostPaisa, economy.BaseFarePaisa, economy.DistanceCostPaisa)
+	}
 	if economy.PickupETAMinutes != nil || economy.Currency != "PKR" || !economy.Approximate {
 		t.Fatalf("unexpected no-driver quote fields: %+v", economy)
 	}
@@ -24,8 +27,8 @@ func TestCalculateQuoteUsesDocumentedDistanceAndFareRounding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("calculate comfort quote: %v", err)
 	}
-	if comfort.EstimatedFarePaisa != 38_014 {
-		t.Fatalf("comfort fare = %d, want 38014", comfort.EstimatedFarePaisa)
+	if comfort.EstimatedFarePaisa != 35_121 {
+		t.Fatalf("comfort fare = %d, want 35121", comfort.EstimatedFarePaisa)
 	}
 }
 
@@ -72,8 +75,8 @@ func TestCalculateFareRoundsVariableFareUpToWholePaisa(t *testing.T) {
 		category string
 		want     int64
 	}{
-		{category: "economy", want: 15_006},
-		{category: "comfort", want: 25_009},
+		{category: "economy", want: 15_007},
+		{category: "comfort", want: 25_008},
 	} {
 		got, err := CalculateFare(test.category, 1)
 		if err != nil {
@@ -82,6 +85,40 @@ func TestCalculateFareRoundsVariableFareUpToWholePaisa(t *testing.T) {
 		if got != test.want {
 			t.Errorf("%s fare = %d, want %d", test.category, got, test.want)
 		}
+	}
+}
+
+func TestFuelPriceChangesFareAndPreservesBreakdown(t *testing.T) {
+	pickup := Location{ID: "pickup", City: "Lahore", Latitude: 31.47, Longitude: 74.40}
+	destination := Location{ID: "destination", City: "Lahore", Latitude: 31.51, Longitude: 74.34}
+	rateCard, err := DefaultRateCard("economy")
+	if err != nil {
+		t.Fatalf("default rate card: %v", err)
+	}
+	baseQuote, err := CalculateQuoteWithRateCard(pickup, destination, "economy", nil, DefaultMatchRadiusKM, rateCard)
+	if err != nil {
+		t.Fatalf("quote at baseline fuel price: %v", err)
+	}
+	rateCard.FuelPricePaisaPerLiter += 10_000
+	rateCard.Version++
+	higherFuelQuote, err := CalculateQuoteWithRateCard(pickup, destination, "economy", nil, DefaultMatchRadiusKM, rateCard)
+	if err != nil {
+		t.Fatalf("quote at higher fuel price: %v", err)
+	}
+	if higherFuelQuote.EstimatedFarePaisa <= baseQuote.EstimatedFarePaisa {
+		t.Fatalf("higher fuel price did not increase fare: baseline=%d higher=%d", baseQuote.EstimatedFarePaisa, higherFuelQuote.EstimatedFarePaisa)
+	}
+	if higherFuelQuote.EstimatedFarePaisa != higherFuelQuote.FuelCostPaisa+higherFuelQuote.BaseFarePaisa+higherFuelQuote.DistanceCostPaisa {
+		t.Fatalf("fare breakdown does not sum to total: %+v", higherFuelQuote)
+	}
+}
+
+func TestLahoreServiceAreaIncludesCityEdgesAndRejectsOutsidePoints(t *testing.T) {
+	if !IsInLahoreServiceArea(31.2, 73.95) || !IsInLahoreServiceArea(31.75, 74.7) {
+		t.Fatal("Lahore service bounds excluded an edge coordinate")
+	}
+	if IsInLahoreServiceArea(31.9, 74.3) || IsInLahoreServiceArea(31.5, 75.1) {
+		t.Fatal("Lahore service bounds accepted a point outside the city area")
 	}
 }
 
