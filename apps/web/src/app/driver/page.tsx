@@ -224,7 +224,7 @@ function DriverWorkspace() {
                 ) : (
                   <div className="request-list">
                     {requests.map((request) => (
-                      <article className="request-row" key={request.id}>
+                      <article className="request-row" data-ride-id={request.id} key={request.id}>
                         <div className="request-row-main">
                           <div className="request-route">
                             <div className="route-rail" aria-hidden="true"><span className="route-dot route-dot-start" /><span className="route-line" /><span className="route-dot route-dot-end" /></div>

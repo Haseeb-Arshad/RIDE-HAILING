@@ -123,6 +123,23 @@ describe("account and driver pages", () => {
     expect(signIn).toHaveBeenCalledWith("rider@example.test", "wrong-password");
   });
 
+  it("keeps object-shaped API errors out of the login message", async () => {
+    const signIn = vi.fn().mockRejectedValue(new ApiError(502, "bad_gateway", { detail: "unreadable response" }));
+    vi.mocked(useAuth).mockReturnValue({
+      state: { status: "signed_out", session: null, message: null },
+      signIn,
+      signOut: vi.fn(),
+      refresh: vi.fn(),
+    });
+
+    render(<LoginPage />);
+    fireEvent.change(screen.getByLabelText("Demo password"), { target: { value: "any-demo-password" } });
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
+
+    expect((await screen.findByRole("alert")).textContent).toContain("The service returned an unreadable error. Please try again.");
+    expect(screen.queryByText("[object Object]")).toBeNull();
+  });
+
   it("routes a successful driver login to the driver workspace", async () => {
     const signIn = vi.fn().mockResolvedValue(driverSession);
     vi.mocked(useAuth).mockReturnValue({

@@ -11,8 +11,8 @@ import (
 )
 
 type authHandlers struct {
-	service   *auth.Service
-	appOrigin string
+	service        *auth.Service
+	allowedOrigins map[string]struct{}
 }
 
 type sessionResponse struct {
@@ -24,7 +24,14 @@ func registerAuthRoutes(router chi.Router, service *auth.Service, appOrigin stri
 }
 
 func newAuthHandlers(service *auth.Service, appOrigin string) *authHandlers {
-	return &authHandlers{service: service, appOrigin: appOrigin}
+	allowedOrigins := make(map[string]struct{})
+	for _, origin := range strings.Split(appOrigin, ",") {
+		origin = strings.TrimSpace(origin)
+		if origin != "" {
+			allowedOrigins[origin] = struct{}{}
+		}
+	}
+	return &authHandlers{service: service, allowedOrigins: allowedOrigins}
 }
 
 func (h *authHandlers) registerRoutes(router chi.Router) {
@@ -44,8 +51,13 @@ func (h *authHandlers) me(w http.ResponseWriter, r *http.Request) {
 
 func (h *authHandlers) requireOrigin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Origin") != h.appOrigin {
-			writeError(w, r, http.StatusForbidden, "origin_forbidden", "The request origin is not allowed.")
+		origin := r.Header.Get("Origin")
+		if origin == "" {
+			writeError(w, r, http.StatusForbidden, "origin_missing", "This action requires a browser origin.")
+			return
+		}
+		if _, ok := h.allowedOrigins[origin]; !ok {
+			writeError(w, r, http.StatusForbidden, "origin_forbidden", "This browser origin is not allowed.")
 			return
 		}
 		next.ServeHTTP(w, r)
