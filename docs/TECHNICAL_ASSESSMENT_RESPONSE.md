@@ -1,107 +1,127 @@
 # Lahore Ride-Hailing
 
-## Technical Assessment Response and Implementation Review
+## Technical Assessment Response
 
-**Assessment:** Lead Full Stack / Backend Engineer take-home
+**Assessment:** Lead Full Stack / Backend Engineer
 
 **Review date:** 2 November 2026
 
-### Executive summary
+### Project overview
 
-The repository implements the core ride-booking assessment as a runnable Lahore demo: a responsive Next.js and TypeScript client, a Go API, Supabase Auth, and durable PostgreSQL state. Riders can request Economy or Comfort trips, review server-calculated estimates, follow ride status, and cancel when allowed. Drivers can control availability, accept eligible rides, and complete assigned trips.
+This project implements the ride-booking workflow described in the assessment. Riders choose a pickup, destination, and ride category, review a fare estimate and pickup ETA, and request a ride. They can follow the ride's status and cancel when permitted. Drivers can change availability, accept eligible requests, and complete assigned trips.
 
-The central reliability requirement is handled in PostgreSQL transactions and constraints, with coverage for competing assignments, retries, lifecycle races, and immutable fare snapshots. Google Maps supports rider-selected pickup and destination pins throughout the configured Lahore service bounds. Distance and fare are transparent estimates; this is an assessment demo, not a production ride-hailing service.
+The frontend uses Next.js and TypeScript. The backend is a Go API, with Supabase Auth for authentication and PostgreSQL for application data. The web and API services run separately using the README instructions.
 
-### How this review treats the attachment
+### Assessment requirements
 
-The supplied PDF is the assessment rubric for this review. Its submission and engineering requirements are treated as criteria to evaluate and answer. The project's direct operating instruction remains to run the Next.js and Go services separately and use the supplied Supabase database; the PDF's alternative mention of Docker does not require a Docker workflow.
-
-### Requirement-by-requirement review
-
-| Assessment area | Result | Evidence and boundary |
-|---|---|---|
-| Lahore booking flow | Implemented | Seven suggested Lahore stops plus rider-selected pins within Lahore service bounds; Economy and Comfort; server-side PKR fare, approximate distance, pickup ETA, and a fuel/base/distance breakdown; ride confirmation, active status, terminal status, and permitted cancellation. Estimates are illustrative. |
-| Responsive UI and states | Implemented | Rider and driver workspaces include loading, validation, success, empty, conflict, and error handling. Component tests cover quote loading/failure, duplicate-submit suppression, stable retry, and ride states. |
-| Backend API | Implemented | Go/Chi exposes the requested create, read, accept, cancel, and complete operations under `/api/v1`, plus quote, current-ride, locations, driver requests, assignment, availability, health, and readiness routes. See [OpenAPI](openapi.yaml) and [API contract](CONTRACT.md). |
-| Matching and lifecycle | Implemented | Eligibility checks availability, city, category, and approximate pickup radius. Valid transitions are enforced; invalid transitions return conflicts. Driver occupancy is released transactionally after cancellation or completion. |
-| Durable data model | Implemented | Versioned Supabase migrations create users, driver profiles/categories, locations, rides, assignments, and idempotency records in the private `ride_hailing` schema. Ride state is not held only in memory. |
-| Concurrency and retries | Implemented | PostgreSQL row locks, a consistent ride-then-driver lock order, unique assignment/open-ride/idempotency constraints, and request fingerprints protect state across API processes. The live database race suite is the decisive verification for these guarantees. |
-| Security and configuration | Implemented for the demo | Supabase Auth owns credentials; Go verifies asymmetric JWT signatures through public JWKS and loads role/identity from PostgreSQL. The app checks ownership, role, Origin, and request shape. Local `.env` files are ignored; only example templates are tracked. |
-| Local setup and operations | Implemented for development | The README documents separate Go and Next.js processes, migrations, seed, environment variables, health/readiness, and checks. Docker is not required. There is no hosted production deployment, production monitoring, load test, or backup-restore proof. |
-| Maps | Partial / optional | The configured Google Maps JavaScript API displays suggested stops and accepts rider-selected pickup/destination pins within the configured Lahore bounds. The Go API validates and persists those pins. Distance is Haversine × a configurable 1.3 road factor, not Google road routing. There is no Places search or live driver GPS. |
-| Documentation and submission | Implemented | README, SQL migrations, automated tests, OpenAPI, architecture/state diagrams, design decisions, limitations, and this response cover the requested submission material. AI assistance is disclosed below. |
-
-Useful implementation evidence includes [booking form](../apps/web/src/components/booking-form.tsx), [ride page](../apps/web/src/app/rides/%5Bid%5D/page.tsx), [Go HTTP routes](../apps/api/internal/transport/http/router.go), [PostgreSQL ride repository](../apps/api/internal/rides/postgres.go), [core schema migration](../supabase/migrations/20261031150815_ride_hailing_core.sql), and [Auth identity migration](../supabase/migrations/20261101151954_supabase_auth_identity.sql). The database race cases are in [ride lifecycle integration tests](../apps/api/internal/rides/lifecycle_integration_test.go) and [idempotency integration tests](../apps/api/internal/rides/postgres_integration_test.go).
+- **Rider interface:** Pickup and destination inputs, Economy and Comfort categories, fare and ETA estimates, booking confirmation, ride status, and cancellation. The interface includes loading, success, empty, and error states.
+- **Driver workflow:** Saved availability, eligible requests, ride acceptance, an active assignment view, and trip completion.
+- **API:** Create, retrieve, accept, cancel, and complete operations, with supporting endpoints for quotes, locations, availability, and current assignments.
+- **Database:** Versioned SQL migrations for users, driver profiles, locations, rides, assignments, pricing, and idempotency records. Core state is stored in PostgreSQL.
+- **Reliability:** Transactions, row locks, constraints, and idempotency keys protect assignment and booking retries.
+- **Maps:** Google Maps displays pickup and destination points on booking, rider status, and active driver trip views. Riders can select points within the configured Lahore bounds and edit their labels. The connecting line is approximate. The assessment permits a simplified map.
+- **Submission material:** Setup instructions, SQL migrations, automated tests, OpenAPI documentation, architecture diagrams, design notes, and known limitations are included in the repository.
 
 ### Architecture questions
 
-#### 1. Why this stack and architecture?
+#### 1. Why did you choose this technology stack and architecture?
 
-I chose Next.js and TypeScript for the rider and driver interfaces, including the same-origin API rewrite and Supabase's cookie-backed browser session. Go with Chi keeps business rules in one explicit API process, while `pgx` gives direct control over PostgreSQL transactions and row locks. Supabase Auth manages credentials and refresh sessions; Supabase PostgreSQL stores application profiles and ride state.
+I chose Next.js and TypeScript for shared interface components and typed API data. Next.js forwards browser API requests to Go through the application origin. Supabase Auth manages sign-in and session refresh.
 
-This modular monolith keeps pricing, authorization, matching, and lifecycle behavior in one place, and keeps the UI, API, schema, and contract reviewable in one repository. It also avoids adding distributed infrastructure before the core transaction rules need it. The trade-off is operating separate Node and Go processes and requiring PostgreSQL for the authoritative flow.
+Go provides an explicit backend for validation, pricing, matching, and ride transitions. Chi handles HTTP routing, while pgx provides direct access to PostgreSQL transactions and row locks. PostgreSQL stores the authoritative state and enforces important rules through constraints.
+
+The backend is a modular monolith: HTTP handlers, business rules, and persistence are separate parts of one service. This keeps the project easy to run and review. The main operational cost is maintaining both a Node process and a Go process.
+
+Requests flow from the browser through Next.js to the Go API and PostgreSQL. Supabase Auth issues access tokens; Go validates them and reads the user's application role from the database. Architecture and ride-state diagrams are included in the architecture notes.
 
 #### 2. How do you prevent two drivers from accepting the same ride?
 
-Acceptance starts a PostgreSQL transaction, locks the requested ride row, then locks the acting driver row in a consistent order. After acquiring those locks, the API rechecks ride state, driver availability, city, category, radius, and active assignments. It inserts the assignment and updates the ride and driver together before commit. A unique assignment per ride and a partial unique index limiting each driver to one active assignment provide database-level backstops. A losing request receives a conflict; an in-process mutex is not relied upon.
+Acceptance runs inside a PostgreSQL transaction. The API locks the ride row, then the acting driver's row, in a consistent order. It checks that the ride is still open and that the driver is available and eligible for its city, category, and pickup radius.
+
+The transaction creates the assignment, marks the ride as accepted, and marks the driver as busy before committing. A unique assignment per ride prevents a second assignment. A partial unique index prevents a driver from holding more than one active assignment.
+
+If two drivers accept simultaneously, one transaction completes first. The other then sees the updated state and receives a conflict response. This protection works across multiple API instances because PostgreSQL coordinates the locks and constraints.
 
 #### 3. How do you handle retries and duplicate requests?
 
-The browser creates an idempotency key for a booking intent, scopes its saved attempt to the signed-in user, and reuses the key after an uncertain response. The API fingerprints the normalized pickup, destination, and category and persists the key, fingerprint, and ride in the same transaction. Repeating the same request returns the original ride; reusing the key for different input returns a conflict. A unique open-ride constraint also prevents a second active booking under a different key.
+The browser creates an idempotency key for each booking attempt and retains it if the response is lost or times out. The API stores that key, a fingerprint of the booking input, and the resulting ride in one transaction.
 
-For rider-selected coordinates, the normalized endpoint labels and coordinates are included in the fingerprint. The selected points are persisted as non-suggested locations in the same transaction as the ride.
+Repeating the same input with the same key returns the original ride. Reusing the key with different input returns a conflict. A separate database constraint prevents a rider from creating a second open ride with another key.
 
-#### Fare calculation
-
-The server applies a configurable road factor to Haversine distance, then calculates `base fare + fuel cost + distance operating cost`. Fuel cost uses the configured petrol price and vehicle efficiency: `ceil(distance metres × fuel price paisa/litre ÷ efficiency metres/litre)`. Each quote reports the effective date and breakdown; a ride stores the same values as an immutable pricing snapshot. The seeded petrol price is PKR 377.91/litre, effective 31 October 2026 ([PSO fuel rates](https://www.psopk.com/en/fuels/fuel-prices); [reported unchanged through 2 November](https://www.dawn.com/news/2040998/petrol-price-unchanged-high-speed-diesel-raised-by-rs229)). Petrol prices are manually updated in `ride_hailing.pricing_rates`, rather than fetched automatically. The resulting route distance, fare, and pickup ETA are estimates; they do not use turn-by-turn routing or traffic data.
+The fingerprint includes the normalized pickup, destination, and category. For custom map points, it also includes their labels and coordinates. Those points are saved in the ride transaction.
 
 #### 4. How does the frontend respond when an API request fails?
 
-The interface shows pending states and disables duplicate actions while a request is in flight. Validation and API failures appear as actionable messages. The API client validates each error-envelope field and uses safe fallback text for object-shaped or malformed messages, so a JSON/object payload is not rendered as the login error; a regression test covers this case. On a `401`, the Supabase browser session is cleared; on a `409`, the rider or driver view reconciles with the current server state. If ride creation has an uncertain network result, the client retains the request key and checks the rider's current ride before offering a safe retry. Active rides are refreshed by polling, which stops at a terminal state.
+The interface shows a pending state and disables repeated actions while a request is running. Validation and API failures appear as readable messages. The API client checks error-response fields and uses fallback text for malformed data, including object-shaped login errors.
+
+An unauthorized response clears the browser authentication session. A conflict refreshes the relevant view from the server. If ride creation has an uncertain result, the browser checks for an existing current ride and retains the original idempotency key for a safe retry.
+
+Active ride status is refreshed by polling. Polling stops when the ride is completed or cancelled.
 
 #### 5. How would you scale to multiple cities and thousands of concurrent users?
 
-Keep the Go API stateless behind a load balancer and scale instances horizontally. Keep city and ownership constraints in PostgreSQL, use a managed pooler, inspect query plans, and measure pool saturation, lock waits, and request latency before changing database topology. Add PostGIS when real coordinates and spatial queries replace the current seeded points and approximate distance. Give driver presence a freshness/expiry model before introducing a separate high-write presence store. No load test has yet established capacity for thousands of concurrent users.
+I would first measure request latency, database pool use, query performance, and lock waits under representative load. The Go API can run as multiple stateless instances behind a load balancer. A managed connection pool would protect PostgreSQL from excessive connections.
+
+City-specific availability, pricing, and matching rules would remain explicit in the data model and queries. For nearby-driver discovery, I would use PostGIS indexes and distance queries over recent driver coordinates. Location updates would need authentication and an expiry time so stale positions are excluded.
+
+As traffic grows, I would replace frequent status polling with an appropriate update channel. Capacity for thousands of concurrent users has not been established by a load test and remains a validation step before production.
 
 #### 6. When would you introduce Redis, a message broker, or separate services?
 
-Use Redis when fresh driver presence and nearby-driver lookup volume make database polling too costly or stale; presence should expire and reconcile back to PostgreSQL. Add a broker when independent consumers need durable ride events, replay, or backpressure. Write an outbox record in the same transaction as each ride transition and make consumers idempotent. Split services only when separate ownership, scaling, or fault isolation outweigh the operational and network-contract cost.
+I would introduce Redis when driver presence and nearby-driver lookups need faster updates or more reads than PostgreSQL should handle directly. Presence records would expire and be reconciled with durable application state.
+
+A message broker becomes useful when notifications, analytics, or other consumers need reliable ride events and independent processing. A transactional outbox would save the ride change and its event together. Consumers would handle repeated deliveries safely.
+
+I would separate services when a component needs independent scaling, ownership, or failure isolation. The current application does not yet justify the additional deployment and communication overhead.
 
 #### 7. How would you deploy, monitor, and roll back a faulty release?
 
-Build immutable web and API artifacts in CI; run unit, contract, migration-compatibility, and PostgreSQL integration checks before release. Apply additive, backward-compatible migrations before deploying code that depends on them, and remove obsolete schema in a later release. Use managed secrets, HTTPS, backups, and tested restore procedures. Preserve the existing request IDs and structured logs, then add latency/error, authorization, pool, lock-wait, and ride-transition metrics with alerts. Roll back application artifacts to a compatible release; use a forward fix for a migration that has already changed durable data.
+I would deploy the web application and Go API as versioned artifacts, with managed PostgreSQL, HTTPS, and secrets supplied by the hosting platform. CI would run application tests, PostgreSQL integration checks, and migration-compatibility checks before release.
 
-There is no hosted deployment or production monitoring in the current repository, so this is the proposed operating model rather than a claim about a running service.
+Database changes would use additive migrations first, followed by compatible application changes. Obsolete schema would be removed in a later release. Backups and restore procedures would be tested before accepting production traffic.
+
+The API already produces structured logs and request IDs. I would add alerts for error rates, latency, database connections, lock waits, and failed ride transitions. A faulty application release could be rolled back to a compatible artifact. A migration that changed durable data would normally require a forward repair.
+
+This is the proposed operating approach. Production hosting, monitoring, and restore procedures have not been demonstrated.
 
 #### 8. What are the three most important improvements before production?
 
-1. **Real dispatch inputs and behavior:** replace fixed driver coordinates with authenticated, expiring location updates; add offer expiry and a dispatch loop; use road-aware routing and market-reviewed pricing.
-2. **Production identity and abuse controls:** add controlled onboarding and account recovery, a clear revocation/key-rotation policy, rate limits, and a reviewed privacy/data-access model.
-3. **Operational readiness:** deploy to managed hosting, add alerts and service metrics, exercise backup restoration and migration rollback procedures, and run representative load tests.
+1. **Dispatch and location accuracy.** Add authenticated driver location updates with expiry, dispatch offers with time limits, road-based routing, and pricing reviewed for actual operating costs.
+2. **Identity and abuse protection.** Add controlled onboarding, account recovery, request rate limits, token-revocation procedures, and a reviewed policy for access to location and account data.
+3. **Operational readiness.** Establish managed hosting, service metrics and alerts, tested backup restoration, safe migration procedures, and representative load tests.
 
-Payment capture and refunds should follow secure dispatch and operational foundations, not be presented as current capabilities.
+### Fare calculation
 
-### Verification record
+The server estimates distance using the Haversine formula and a configurable city-road factor, currently 1.3. The fare is the base fare plus estimated fuel cost plus distance operating cost.
 
-#### Current local checks
+Fuel cost uses the estimated distance, configured petrol price, and vehicle category's fuel efficiency. The API returns the rate's effective date and fare breakdown. Each booked ride stores a fixed snapshot of these values, so a later rate change does not alter its saved estimate.
 
-- `go test ./... -count=1` with `TEST_DATABASE_URL` unset: Go unit and HTTP tests passed; PostgreSQL-only cases were skipped in this isolated run.
-- `go vet ./...`: passed.
-- `npm test`: 23 tests passed across five files.
-- `npm run lint`: passed.
-- `npx tsc --noEmit`: passed.
-- `npm run build`: passed; Next.js generated the production build and routes.
-- The full Go suite with `TEST_DATABASE_URL` set to the supplied Supabase PostgreSQL database passed. It exercised the database-backed lifecycle, retry, race, custom-pin, and fuel-price snapshot cases; database test fixtures clean up their rows.
-- `npm run test:e2e`: both browser tests passed with real Supabase Auth and Google Maps. A separate ride-journey run against the existing `localhost:3000` app also passed after its API rewrite was refreshed.
+Petrol prices are maintained in the pricing_rates database table. Updates are manual. Distance, fare, and pickup ETA remain estimates and do not account for live traffic.
 
-#### Connected-provider evidence
+### Verification
 
-The real Supabase Auth rider-to-driver Playwright journey passed on 2 November 2026, including the driver availability toggle, accepting the specific ride requested, and completion reflected on the rider page. The map test loaded Google Maps, placed custom pins, and displayed the fare breakdown. A database integration test verifies arbitrary in-bounds Lahore pins, the fuel/distance formula, ride snapshots, and exclusion of private pins from suggested locations. Browser journeys use dedicated demo accounts and leave completed/cancelled ride records in Supabase.
+The following checks were recorded on 2 November 2026:
 
-### AI-use disclosure
+- Go unit and HTTP tests, plus go vet, passed.
+- The PostgreSQL integration suite passed against the configured Supabase database. It covered lifecycle rules, concurrent acceptance, duplicate requests, custom map points, and saved fare calculations.
+- The latest frontend run passed all 24 tests across five files. Lint and TypeScript checks also passed.
+- GitHub CI passed the API checks and the web tests, lint, TypeScript checks, and production build for the merged route-map change.
+- Earlier browser tests passed with real Supabase Auth and Google Maps. They covered booking, driver availability, ride acceptance, completion reflected on the rider page, custom map pins, and fare breakdowns. These browser tests were not rerun for this document revision.
 
-AI-assisted coding tools supported implementation and technical documentation. The claims in this response were checked against the repository, and the current local test, lint, type-check, and build results are listed above. Live provider behavior is described only where dated verification evidence exists.
+Database integration fixtures clean up their test rows. Browser journeys use demo accounts and leave completed or cancelled ride records. These checks do not establish production capacity under sustained load.
 
-### Scope limits
+### Known limitations
 
-This implementation does not claim free-form address search, road routing, live GPS, dynamic dispatch or reassignment, payment processing, refunds, customer notifications, public signup, OAuth, real-time push updates, automatic fuel-price updates, production deployment, load-test results, or backup/restore proof. Current fare, distance, ETA, and driver positions remain estimates or demo data. See [current limitations](LIMITATIONS.md) and [architecture notes](ARCHITECTURE.md) for the proposed growth path.
+The application does not include address search, automatic address labels, road routing, live driver GPS, dispatch expiry or reassignment, payments, refunds, customer notifications, public signup, OAuth, or push updates. Driver positions are demo data. Fuel prices require manual updates. Production hosting, load testing, and backup restoration remain future work.
+
+### AI assistance
+
+AI coding tools assisted with implementation and documentation. Their output was reviewed against the code and checked through automated tests, static checks, a production build, and the browser and database checks described above.
+
+### Supporting documents
+
+- [Setup and execution instructions](../README.md)
+- [API specification](openapi.yaml) and [API contract](CONTRACT.md)
+- [Architecture diagrams and design notes](ARCHITECTURE.md)
+- [Known limitations and proposed improvements](LIMITATIONS.md)
+- [Database migrations](../supabase/migrations)
