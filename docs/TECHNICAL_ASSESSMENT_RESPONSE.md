@@ -116,7 +116,7 @@ The application does not include address search, automatic address labels, road 
 
 ### AI assistance
 
-AI coding tools assisted with implementation and documentation. Their output was reviewed against the code and checked through automated tests, static checks, a production build, and the browser and database checks described above.
+AI coding assistance was used during implementation. I reviewed the code and documentation and verified them through the checks listed above.
 
 ### Supporting documents
 
