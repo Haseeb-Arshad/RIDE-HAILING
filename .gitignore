@@ -22,6 +22,9 @@ pnpm-debug.log*
 *.test
 coverage.out
 
+# Local test and document artifacts
+/tmp/
+
 # Editor and operating-system files
 .vscode/
 .idea/
