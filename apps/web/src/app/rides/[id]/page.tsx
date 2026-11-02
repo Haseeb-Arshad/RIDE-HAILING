@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { AppFrame } from "@/components/app-frame";
 import { AuthGuard } from "@/components/auth-guard";
 import { RouteSummary } from "@/components/route-summary";
+import { GoogleRouteMap } from "@/components/google-route-map";
 import { RideProgress, StatusPill } from "@/components/ride-status";
 import { api, ApiError, type Ride } from "@/lib/api";
 import { useAuth } from "@/lib/auth-provider";
@@ -150,6 +151,11 @@ function RideWorkspace({ rideID }: Readonly<{ rideID: string }>) {
                 <StatusPill status={currentRide.status} />
               </div>
               <RouteSummary pickup={currentRide.pickup} destination={currentRide.destination} />
+              <GoogleRouteMap
+                locations={[currentRide.pickup, currentRide.destination]}
+                pickupID={currentRide.pickup.id}
+                destinationID={currentRide.destination.id}
+              />
               {currentRide.assignment && currentRide.status !== "requested" && (
                 <div className="driver-match">
                   <span className="driver-match-mark" aria-hidden="true">{currentRide.assignment.driver_display_name.slice(0, 1).toUpperCase()}</span>

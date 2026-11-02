@@ -89,21 +89,21 @@ export function BookingForm({ locations, ownerID, onRideCreated }: BookingFormPr
     document.getElementById("route-map-preview")?.scrollIntoView?.({ behavior: "smooth", block: "center" });
   }, [selectionTarget]);
 
-  function resetEstimate() {
+  const resetEstimate = useCallback(() => {
     setQuote(null);
     setQuoteInputSignature(null);
     idempotencyKey.current = null;
     setError(null);
     try { sessionStorage.removeItem(attemptStorageKey); } catch { /* Storage may be unavailable. */ }
-  }
+  }, []);
 
-  const selectMapPoint = useCallback((coordinates: { latitude: number; longitude: number }) => {
+  const selectMapPoint = useCallback((coordinates: { latitude: number; longitude: number }, target: "pickup" | "destination") => {
     const point: LocationInput = { name: "Pinned location", area: "Lahore", ...coordinates };
-    if (selectionTarget === "pickup") setPickupPoint(point);
-    if (selectionTarget === "destination") setDestinationPoint(point);
+    if (target === "pickup") setPickupPoint(point);
+    else setDestinationPoint(point);
     setSelectionTarget(null);
     resetEstimate();
-  }, [selectionTarget]);
+  }, [resetEstimate]);
 
   const rejectMapPoint = useCallback(() => {
     setError("Choose a point inside the Lahore service area.");
