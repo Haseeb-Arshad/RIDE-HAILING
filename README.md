@@ -4,11 +4,11 @@ A focused ride-booking demo for Lahore. The Next.js app presents rider and drive
 
 ## Project status
 
-The connected demo was verified against the supplied Supabase project on 2026-11-02. Both application migrations were applied, the seed linked three Auth accounts and added seven Lahore locations plus two driver profiles, the PostgreSQL integration suite passed, and the Playwright rider-to-driver journey passed. Web lint, 18 frontend tests, the production build, Go tests, and the GitHub API/web checks also passed.
+The connected demo was verified against the supplied Supabase project on 2026-11-02. Both application migrations were applied, the seed linked three Auth accounts and added seven Lahore locations plus two driver profiles, the PostgreSQL integration suite passed, and the Playwright rider-to-driver journey passed. Web lint, 19 frontend tests, the production build, Go tests, and the GitHub API/web checks also passed.
 
 These checks prove the current demo flow against this project configuration; they do not establish production readiness. Re-run the database integration and browser checks after relevant code, schema, or Auth configuration changes. Local unit and UI tests can run without a database. GitHub Actions does not connect to Supabase, so its green checks are not a substitute for the PostgreSQL integration run.
 
-The execution plan references a separate five-page assessment source that was not included with the pasted plan. Criteria present only in that missing source remain unverified.
+The [technical assessment response](docs/TECHNICAL_ASSESSMENT_RESPONSE.md) reconciles the repository with the supplied five-page assessment, answers its architecture questions, and distinguishes current demo behavior from production work.
 
 ## Architecture
 
@@ -67,7 +67,7 @@ Open <http://127.0.0.1:3000>. The API listens on <http://127.0.0.1:8080>; livene
 
 ## Google Maps preview
 
-The rider workspace can display the seven seeded Lahore locations on Google Maps and focus the map on the selected pickup and destination. The API returns each public demo location's latitude and longitude for this purpose. This preview is optional: without a browser key, booking still uses the existing seeded locations and approximate Go estimates, and the map explains how to configure the provider.
+The rider workspace has a conditional Google Maps JavaScript preview for the seven seeded Lahore locations and selected pickup and destination. The API returns each public demo location's latitude and longitude for this purpose. A browser key is not configured in the current local environment, so live map tiles are unverified and the UI shows its setup state. Booking still uses the seeded locations and approximate Go estimates.
 
 To enable the preview, add `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` to the ignored `apps/web/.env.local`, enable Maps JavaScript API and billing in Google Cloud, and restrict the browser key to the web origins and APIs it needs. Restart Next.js after changing the environment file. A browser key is visible to visitors by design, so apply website and API restrictions; never put a server key in a `NEXT_PUBLIC_` variable. See Google's [Maps JavaScript API setup](https://developers.google.com/maps/documentation/javascript/get-api-key) and [API key security guidance](https://developers.google.com/maps/api-security-best-practices).
 
@@ -127,5 +127,7 @@ AI tools were used for implementation and documentation support. The repository 
 - [Architecture and state diagrams](docs/ARCHITECTURE.md)
 - [Architecture decisions](docs/DECISIONS.md)
 - [Current limitations and unverified checks](docs/LIMITATIONS.md)
+- [Technical assessment response (PDF)](output/pdf/technical-assessment-response.pdf)
+- [Technical assessment response (Markdown)](docs/TECHNICAL_ASSESSMENT_RESPONSE.md)
 - [OpenAPI contract](docs/openapi.yaml)
 - [Continuous integration checks](.github/workflows/ci.yml)
