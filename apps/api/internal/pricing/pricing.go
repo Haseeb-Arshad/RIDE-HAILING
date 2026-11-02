@@ -3,13 +3,18 @@ package pricing
 import (
 	"errors"
 	"math"
+	"time"
 )
 
 const (
-	DefaultMatchRadiusKM = 20
-	roadDistanceFactor   = 1.3
-	earthRadiusMeters    = 6_371_008.8
-	averageSpeedMPerHour = 25_000
+	DefaultMatchRadiusKM  = 20
+	roadDistanceFactorBPS = 13_000
+	earthRadiusMeters     = 6_371_008.8
+	averageSpeedMPerHour  = 25_000
+	LahoreMinLatitude     = 31.20
+	LahoreMaxLatitude     = 31.75
+	LahoreMinLongitude    = 73.95
+	LahoreMaxLongitude    = 74.70
 )
 
 var (
@@ -35,20 +40,54 @@ type AvailableDriver struct {
 }
 
 type Quote struct {
-	EstimatedFarePaisa      int64  `json:"estimated_fare_paisa"`
-	EstimatedDistanceMeters int64  `json:"estimated_distance_meters"`
-	PickupETAMinutes        *int   `json:"pickup_eta_minutes"`
-	Currency                string `json:"currency"`
-	Approximate             bool   `json:"approximate"`
+	EstimatedFarePaisa      int64     `json:"estimated_fare_paisa"`
+	EstimatedDistanceMeters int64     `json:"estimated_distance_meters"`
+	PickupETAMinutes        *int      `json:"pickup_eta_minutes"`
+	FuelPricePaisaPerLiter  int64     `json:"fuel_price_paisa_per_liter"`
+	FuelPriceEffectiveDate  time.Time `json:"fuel_price_effective_date"`
+	FuelCostPaisa           int64     `json:"fuel_cost_paisa"`
+	BaseFarePaisa           int64     `json:"base_fare_paisa"`
+	DistanceCostPaisa       int64     `json:"distance_cost_paisa"`
+	PricingVersion          int       `json:"pricing_version"`
+	Currency                string    `json:"currency"`
+	Approximate             bool      `json:"approximate"`
+}
+
+type RateCard struct {
+	Category                     string
+	FuelPricePaisaPerLiter       int64
+	FuelPriceEffectiveDate       time.Time
+	FuelEfficiencyMetersPerLiter int64
+	BaseFarePaisa                int64
+	NonFuelCostPaisaPerKM        int64
+	RoadDistanceFactorBPS        int64
+	Version                      int
 }
 
 func CalculateQuote(pickup, destination Location, category string, drivers []AvailableDriver, matchRadiusKM int) (Quote, error) {
-	if !validCoordinates(pickup.Latitude, pickup.Longitude) || !validCoordinates(destination.Latitude, destination.Longitude) || pickup.ID == destination.ID || matchRadiusKM < 1 {
+	rateCard, err := DefaultRateCard(category)
+	if err != nil {
+		return Quote{}, err
+	}
+	return CalculateQuoteWithRateCard(pickup, destination, category, drivers, matchRadiusKM, rateCard)
+}
+
+func CalculateQuoteWithRateCard(pickup, destination Location, category string, drivers []AvailableDriver, matchRadiusKM int, rateCard RateCard) (Quote, error) {
+	if !validCoordinates(pickup.Latitude, pickup.Longitude) || !validCoordinates(destination.Latitude, destination.Longitude) || (pickup.ID != "" && pickup.ID == destination.ID) || matchRadiusKM < 1 {
+		return Quote{}, ErrInvalidEstimate
+	}
+	if !validRateCard(rateCard) || rateCard.Category != category {
+		if category != "economy" && category != "comfort" {
+			return Quote{}, ErrUnsupportedCategory
+		}
 		return Quote{}, ErrInvalidEstimate
 	}
 
-	distanceMeters := DistanceMeters(pickup.Latitude, pickup.Longitude, destination.Latitude, destination.Longitude)
-	fare, err := CalculateFare(category, distanceMeters)
+	distanceMeters := distanceMetersWithFactor(pickup.Latitude, pickup.Longitude, destination.Latitude, destination.Longitude, rateCard.RoadDistanceFactorBPS)
+	if distanceMeters <= 1 {
+		return Quote{}, ErrInvalidEstimate
+	}
+	fare, fuelCost, distanceCost, err := CalculateFareWithRateCard(distanceMeters, rateCard)
 	if err != nil {
 		return Quote{}, err
 	}
@@ -83,33 +122,43 @@ func CalculateQuote(pickup, destination Location, category string, drivers []Ava
 		EstimatedFarePaisa:      fare,
 		EstimatedDistanceMeters: distanceMeters,
 		PickupETAMinutes:        eta,
+		FuelPricePaisaPerLiter:  rateCard.FuelPricePaisaPerLiter,
+		FuelPriceEffectiveDate:  rateCard.FuelPriceEffectiveDate,
+		FuelCostPaisa:           fuelCost,
+		BaseFarePaisa:           rateCard.BaseFarePaisa,
+		DistanceCostPaisa:       distanceCost,
+		PricingVersion:          rateCard.Version,
 		Currency:                "PKR",
 		Approximate:             true,
 	}, nil
 }
 
 func CalculateFare(category string, distanceMeters int64) (int64, error) {
-	if distanceMeters < 1 {
-		return 0, ErrInvalidEstimate
+	rateCard, err := DefaultRateCard(category)
+	if err != nil {
+		return 0, err
 	}
+	fare, _, _, err := CalculateFareWithRateCard(distanceMeters, rateCard)
+	return fare, err
+}
 
-	var basePaisa, perKilometerPaisa int64
-	switch category {
-	case "economy":
-		basePaisa, perKilometerPaisa = 15_000, 6_000
-	case "comfort":
-		basePaisa, perKilometerPaisa = 25_000, 9_000
-	default:
-		return 0, ErrUnsupportedCategory
+func CalculateFareWithRateCard(distanceMeters int64, rateCard RateCard) (farePaisa, fuelCostPaisa, distanceCostPaisa int64, err error) {
+	if distanceMeters < 1 || !validRateCard(rateCard) {
+		return 0, 0, 0, ErrInvalidEstimate
 	}
-
-	variableFare := (distanceMeters*perKilometerPaisa + 999) / 1000
-	return basePaisa + variableFare, nil
+	fuelCostPaisa = (distanceMeters*rateCard.FuelPricePaisaPerLiter + rateCard.FuelEfficiencyMetersPerLiter - 1) / rateCard.FuelEfficiencyMetersPerLiter
+	distanceCostPaisa = (distanceMeters*rateCard.NonFuelCostPaisaPerKM + 999) / 1000
+	farePaisa = rateCard.BaseFarePaisa + fuelCostPaisa + distanceCostPaisa
+	return farePaisa, fuelCostPaisa, distanceCostPaisa, nil
 }
 
 // DistanceMeters returns the demo's approximate road distance: Haversine
 // distance multiplied by 1.3 and rounded to the nearest whole meter.
 func DistanceMeters(fromLatitude, fromLongitude, toLatitude, toLongitude float64) int64 {
+	return distanceMetersWithFactor(fromLatitude, fromLongitude, toLatitude, toLongitude, roadDistanceFactorBPS)
+}
+
+func distanceMetersWithFactor(fromLatitude, fromLongitude, toLatitude, toLongitude float64, roadFactorBasisPoints int64) int64 {
 	fromLat := degreesToRadians(fromLatitude)
 	toLat := degreesToRadians(toLatitude)
 	deltaLat := toLat - fromLat
@@ -123,15 +172,43 @@ func DistanceMeters(fromLatitude, fromLongitude, toLatitude, toLongitude float64
 		haversine = 1
 	}
 	straightLineMeters := 2 * earthRadiusMeters * math.Asin(math.Sqrt(haversine))
-	roadMeters := int64(math.Round(straightLineMeters * roadDistanceFactor))
+	roadMeters := int64(math.Round(straightLineMeters * float64(roadFactorBasisPoints) / 10_000))
 	if roadMeters < 1 {
 		return 1
 	}
 	return roadMeters
 }
 
+func DefaultRateCard(category string) (RateCard, error) {
+	switch category {
+	case "economy":
+		return RateCard{Category: category, FuelPricePaisaPerLiter: 37_791, FuelPriceEffectiveDate: time.Date(2026, time.October, 31, 0, 0, 0, 0, time.UTC), FuelEfficiencyMetersPerLiter: 12_000, BaseFarePaisa: 15_000, NonFuelCostPaisaPerKM: 2_850, RoadDistanceFactorBPS: roadDistanceFactorBPS, Version: 1}, nil
+	case "comfort":
+		return RateCard{Category: category, FuelPricePaisaPerLiter: 37_791, FuelPriceEffectiveDate: time.Date(2026, time.October, 31, 0, 0, 0, 0, time.UTC), FuelEfficiencyMetersPerLiter: 9_000, BaseFarePaisa: 25_000, NonFuelCostPaisaPerKM: 2_800, RoadDistanceFactorBPS: roadDistanceFactorBPS, Version: 1}, nil
+	default:
+		return RateCard{}, ErrUnsupportedCategory
+	}
+}
+
+func validRateCard(rateCard RateCard) bool {
+	return rateCard.FuelPricePaisaPerLiter > 0 &&
+		!rateCard.FuelPriceEffectiveDate.IsZero() &&
+		rateCard.FuelEfficiencyMetersPerLiter > 0 &&
+		rateCard.BaseFarePaisa >= 0 &&
+		rateCard.NonFuelCostPaisaPerKM >= 0 &&
+		rateCard.RoadDistanceFactorBPS >= 10_000 &&
+		rateCard.RoadDistanceFactorBPS <= 30_000 &&
+		rateCard.Version > 0
+}
+
 func validCoordinates(latitude, longitude float64) bool {
 	return !math.IsNaN(latitude) && !math.IsNaN(longitude) && !math.IsInf(latitude, 0) && !math.IsInf(longitude, 0) && latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180
+}
+
+func IsInLahoreServiceArea(latitude, longitude float64) bool {
+	return validCoordinates(latitude, longitude) &&
+		latitude >= LahoreMinLatitude && latitude <= LahoreMaxLatitude &&
+		longitude >= LahoreMinLongitude && longitude <= LahoreMaxLongitude
 }
 
 func degreesToRadians(value float64) float64 {

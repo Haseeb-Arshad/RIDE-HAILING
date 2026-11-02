@@ -8,7 +8,7 @@ import { RouteSummary } from "@/components/route-summary";
 import { RideProgress, StatusPill } from "@/components/ride-status";
 import { api, ApiError, type Ride } from "@/lib/api";
 import { useAuth } from "@/lib/auth-provider";
-import { formatCategory, formatDistance, formatMoney, shortRideId } from "@/lib/format";
+import { formatCategory, formatDate, formatDistance, formatMoney, shortRideId } from "@/lib/format";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const isActive = (status: Ride["status"] | undefined) => status === "requested" || status === "accepted";
@@ -161,6 +161,15 @@ function RideWorkspace({ rideID }: Readonly<{ rideID: string }>) {
                 <div className="ride-fact"><span>Estimated fare</span><strong>{formatMoney(currentRide.estimated_fare_paisa)}</strong></div>
                 <div className="ride-fact"><span>Approx. distance</span><strong>{formatDistance(currentRide.estimated_distance_meters)}</strong></div>
                 <div className="ride-fact"><span>Pickup estimate</span><strong>{currentRide.pickup_eta_minutes === null ? "Unavailable" : `About ${currentRide.pickup_eta_minutes} min`}</strong></div>
+                {currentRide.fuel_price_paisa_per_liter !== undefined && currentRide.fuel_price_effective_date && (
+                  <details className="fare-breakdown ride-fare-breakdown">
+                    <summary>Fare calculation · rate effective {formatDate(currentRide.fuel_price_effective_date)}</summary>
+                    <div><span>Fuel price per litre</span><strong>{formatMoney(currentRide.fuel_price_paisa_per_liter)}</strong></div>
+                    <div><span>Estimated fuel cost</span><strong>{formatMoney(currentRide.fuel_cost_paisa ?? 0)}</strong></div>
+                    <div><span>Base fare</span><strong>{formatMoney(currentRide.base_fare_paisa ?? 0)}</strong></div>
+                    <div><span>Distance operating cost</span><strong>{formatMoney(currentRide.distance_cost_paisa ?? 0)}</strong></div>
+                  </details>
+                )}
               </div>
               <p className="quote-disclaimer">Saved estimate · PKR · Approximate demo distance and pricing.</p>
               {isActive(currentRide.status) && (

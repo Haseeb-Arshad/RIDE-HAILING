@@ -165,7 +165,7 @@ func TestPostgresSchemaConstraintsAndRepeatableSeed(t *testing.T) {
 		VALUES ($1, 'schema-check-key', decode(repeat('cd', 32), 'hex'), $2)`, riderA, rideA)
 
 	expectConstraintFailure(t, ctx, tx, "23514", `
-		UPDATE ride_hailing.rides SET status = 'accepted' WHERE id = $1`, rideB)
+		UPDATE ride_hailing.rides SET status = 'completed', completed_at = now() WHERE id = $1`, rideB)
 }
 
 func assertSeedFixtures(t *testing.T, ctx context.Context, tx pgx.Tx, expectedFirstDriverStatus string) {

@@ -12,6 +12,15 @@ export function formatDistance(meters: number) {
   return `${new Intl.NumberFormat("en-PK", { maximumFractionDigits: 1 }).format(kilometers)} km`;
 }
 
+export function formatDate(dateTime: string) {
+  return new Intl.DateTimeFormat("en-PK", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(dateTime));
+}
+
 export function formatCategory(category: "economy" | "comfort") {
   return category === "economy" ? "Economy" : "Comfort";
 }

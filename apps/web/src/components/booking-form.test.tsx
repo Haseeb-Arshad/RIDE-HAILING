@@ -6,7 +6,19 @@ import type { Location, Quote, Ride } from "@/lib/api";
 
 const pickup: Location = { id: "10000000-0000-4000-8000-000000000001", name: "Liberty Market", area: "Gulberg III", city: "Lahore", latitude: 31.5113, longitude: 74.3436 };
 const destination: Location = { id: "10000000-0000-4000-8000-000000000002", name: "MM Alam Road", area: "Gulberg III", city: "Lahore", latitude: 31.5147, longitude: 74.3524 };
-const quote: Quote = { estimated_fare_paisa: 23_676, estimated_distance_meters: 2250, pickup_eta_minutes: null, currency: "PKR", approximate: true };
+const quote: Quote = {
+  estimated_fare_paisa: 23_676,
+  estimated_distance_meters: 2250,
+  pickup_eta_minutes: null,
+  fuel_price_paisa_per_liter: 37_791,
+  fuel_price_effective_date: "2026-10-31T00:00:00Z",
+  fuel_cost_paisa: 7_086,
+  base_fare_paisa: 15_000,
+  distance_cost_paisa: 1_590,
+  pricing_version: 1,
+  currency: "PKR",
+  approximate: true,
+};
 const ride: Ride = {
   id: "40000000-0000-4000-8000-000000000001",
   rider: { id: "20000000-0000-4000-8000-000000000001", display_name: "Demo Rider" },
